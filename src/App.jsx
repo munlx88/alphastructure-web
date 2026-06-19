@@ -4,6 +4,17 @@ import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Activity, Zap, Server, Target, Crosshair, Lock, User, LogOut, CreditCard, ChevronRight, BarChart2, Cpu, Shield, ArrowRight } from 'lucide-react';
 
+// ─── Custom Responsive Hook ───────────────────────────────────────────────────
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return isMobile;
+};
+
 // ─── Firebase ─────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
@@ -81,15 +92,15 @@ function buildSim(sym) {
     swing_highs: [{ t: now - 52 * M, p: price * 1.005 }, { t: now - 24 * M, p: price * 1.002 }],
     swing_lows:  [{ t: now - 42 * M, p: price * 0.996 }, { t: now - 14 * M, p: price * 0.998 }],
     signal: { decision: 'HOLD', score: 55, regime: 'DOWN_IMPULSE', location: 'DISCOUNT FLOOR', thesis: 'Score 55/100 < 70 gate. HTF: BEARISH | M15: DOWNTREND | VSA: NEUTRAL | TL: None [Bear Reject] [Bull Reject]' },
-    positions: [{ ticket: 101, type: "SHORT", volume: 0.5, open_price: price*1.002, sl: price*1.005, tp: price*0.990, pnl: 450.20 }], 
-    orders: [{ ticket: 202, type: "SELL LIMIT", volume: 1.0, open_price: price*1.004, sl: price*1.007, tp: price*0.988 }], 
+    positions: [{ ticket: 101, type: "SHORT", volume: 0.5, open_price: price*1.002, sl: price*1.005, tp: price*0.990, pnl: -1.92 }], 
+    orders: [], 
     candles,
   };
 }
 const SIM = Object.fromEntries(Object.keys(SCFG).map(s => [s, buildSim(s)]));
 
 // ─── Interactive Pure HTML5 Canvas Chart ──────────────────────────────────────
-const StructuralChart = ({ data, symbol }) => {
+const StructuralChart = ({ data, symbol, isMobile }) => {
   const wrapRef   = useRef(null);
   const canvasRef = useRef(null);
   
@@ -105,6 +116,8 @@ const StructuralChart = ({ data, symbol }) => {
   const dragStartY = useRef(0);
   const dragStartStretch = useRef(1.0);
   const dragStartOffset = useRef(0.0);
+  const initialPinchDist = useRef(null);
+  const initialZoom = useRef(null);
 
   const draw = useCallback(() => {
     if (!wrapRef.current || !data || !canvasRef.current) return;
@@ -117,7 +130,8 @@ const StructuralChart = ({ data, symbol }) => {
     const XH  = 24;   
     const GAP = 8;
     const MH  = TH - VH - XH - GAP;  
-    const ml = 10, mr = 80, mt = 20, mb = VH + XH + GAP;
+    
+    const ml = 10, mr = isMobile ? 55 : 80, mt = 20;
     const W   = TW - ml - mr;
     const dpr = window.devicePixelRatio || 1;
 
@@ -178,7 +192,7 @@ const StructuralChart = ({ data, symbol }) => {
     }
 
     ctx.fillStyle = '#64748b'; ctx.font = '10px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const labelStep = Math.max(1, Math.floor(n / 8)); 
+    const labelStep = Math.max(1, Math.floor(n / (isMobile ? 4 : 8))); 
     candles.forEach((c, i) => {
       if (i % labelStep === 0 || i === candles.length -1) { 
         const date = new Date(c.t * 1000);
@@ -197,7 +211,7 @@ const StructuralChart = ({ data, symbol }) => {
       if (dash.length) ctx.setLineDash(dash);
       ctx.beginPath(); ctx.moveTo(ml, y); ctx.lineTo(ml + W, y); ctx.stroke();
       ctx.setLineDash([]);
-      if (label) { ctx.fillStyle = color; ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.fillText(label, ml + W + 6, y); }
+      if (label && !isMobile) { ctx.fillStyle = color; ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.fillText(label, ml + W + 6, y); }
       ctx.restore();
     };
 
@@ -319,13 +333,15 @@ const StructuralChart = ({ data, symbol }) => {
           ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.roundRect(x - 35, TH - XH + 2, 70, 20, 4); ctx.fill();
           ctx.fillStyle = '#f8fafc'; ctx.textAlign = 'center'; ctx.fillText(tStr, x, TH - (XH / 2) + 2);
           
-          const infoStr = `O:${hoverC.o.toFixed(5)} H:${hoverC.h.toFixed(5)} L:${hoverC.l.toFixed(5)} C:${hoverC.c.toFixed(5)}`;
-          ctx.fillStyle = 'rgba(15,23,42,0.8)'; ctx.beginPath(); ctx.roundRect(ml + 10, mt + 10, 260, 24, 6); ctx.fill();
-          ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'left'; ctx.fillText(infoStr, ml + 20, mt + 22);
+          if (!isMobile) {
+            const infoStr = `O:${hoverC.o.toFixed(5)} H:${hoverC.h.toFixed(5)} L:${hoverC.l.toFixed(5)} C:${hoverC.c.toFixed(5)}`;
+            ctx.fillStyle = 'rgba(15,23,42,0.8)'; ctx.beginPath(); ctx.roundRect(ml + 10, mt + 10, 260, 24, 6); ctx.fill();
+            ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'left'; ctx.fillText(infoStr, ml + 20, mt + 22);
+          }
         }
       }
     }
-  }, [data, symbol]);
+  }, [data, symbol, isMobile]);
 
   useEffect(() => {
     draw();
@@ -339,11 +355,15 @@ const StructuralChart = ({ data, symbol }) => {
     const cv = canvasRef.current;
     if (!cv) return;
 
+    let lastTap = 0;
+
+    // --- MOUSE EVENTS ---
     const onMouseDown = (e) => { 
       const rect = cv.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
-      const mr = 80;
-      if (mouseX > cv.clientWidth - mr) {
+      const TW = cv.clientWidth;
+      const mr = isMobile ? 55 : 80;
+      if (mouseX > TW - mr) {
         isDraggingY.current = true; dragStartY.current = e.clientY; dragStartStretch.current = yStretchRef.current;
       } else {
         isDraggingX.current = true; dragStartX.current = e.clientX; dragStartY.current = e.clientY; dragStartOffset.current = yOffsetRef.current;
@@ -357,7 +377,7 @@ const StructuralChart = ({ data, symbol }) => {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
       const TW = cv.clientWidth;
-      const mr = 80;
+      const mr = isMobile ? 55 : 80;
       mouseRef.current = { x: mouseX, y: mouseY };
 
       if (isDraggingY.current) {
@@ -391,9 +411,87 @@ const StructuralChart = ({ data, symbol }) => {
     const onDoubleClick = (e) => {
       const rect = cv.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
-      const mr = 80;
-      if (mouseX > cv.clientWidth - mr) { yStretchRef.current = 1.0; yOffsetRef.current = 0.0; requestAnimationFrame(draw); } 
+      const TW = cv.clientWidth;
+      const mr = isMobile ? 55 : 80;
+      if (mouseX > TW - mr) { yStretchRef.current = 1.0; yOffsetRef.current = 0.0; requestAnimationFrame(draw); } 
       else { yStretchRef.current = 1.0; yOffsetRef.current = 0.0; panRef.current = 0; requestAnimationFrame(draw); }
+    };
+
+    // --- TOUCH EVENTS ---
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        if (e.cancelable) e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        initialPinchDist.current = Math.hypot(dx, dy);
+        initialZoom.current = zoomRef.current;
+        return;
+      }
+
+      if (e.touches.length === 1) {
+        const now = Date.now();
+        if (now - lastTap < 300) {
+          yStretchRef.current = 1.0; yOffsetRef.current = 0.0; panRef.current = 0; requestAnimationFrame(draw);
+          if (e.cancelable) e.preventDefault();
+          return;
+        }
+        lastTap = now;
+
+        const touch = e.touches[0];
+        const rect = cv.getBoundingClientRect();
+        const mouseX = touch.clientX - rect.left;
+        const TW = cv.clientWidth;
+        const mr = isMobile ? 55 : 80;
+
+        if (mouseX > TW - mr) {
+          isDraggingY.current = true; dragStartY.current = touch.clientY; dragStartStretch.current = yStretchRef.current;
+        } else {
+          isDraggingX.current = true; dragStartX.current = touch.clientX; dragStartY.current = touch.clientY; dragStartOffset.current = yOffsetRef.current;
+        }
+      }
+    };
+
+    const onTouchMove = (e) => {
+      if (e.touches.length === 2 && initialPinchDist.current) {
+        if (e.cancelable) e.preventDefault();
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        const scale = initialPinchDist.current / dist;
+        zoomRef.current = Math.max(15, Math.min(200, initialZoom.current * scale));
+        requestAnimationFrame(draw);
+        return;
+      }
+
+      if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        const TW = cv.clientWidth;
+        const mr = isMobile ? 55 : 80;
+
+        if (isDraggingY.current) {
+          if (e.cancelable) e.preventDefault();
+          const dy = touch.clientY - dragStartY.current;
+          const factor = 1 + (dy / 200); 
+          yStretchRef.current = Math.max(0.05, Math.min(20, dragStartStretch.current * factor));
+          requestAnimationFrame(draw);
+        } else if (isDraggingX.current) {
+          if (e.cancelable) e.preventDefault();
+          const dx = touch.clientX - dragStartX.current;
+          const dy = touch.clientY - dragStartY.current;
+          const W = TW - 10 - mr;
+          const xBand = W / Math.min(zoomRef.current, 200); 
+          const shift = Math.round(dx / Math.max(1, xBand)); 
+          if (Math.abs(shift) >= 1) { panRef.current += shift; dragStartX.current = touch.clientX; }
+          yOffsetRef.current = dragStartOffset.current + (dy * pricePerPixelRef.current);
+          requestAnimationFrame(draw);
+        }
+      }
+    };
+
+    const onTouchEnd = () => {
+      isDraggingX.current = false;
+      isDraggingY.current = false;
+      initialPinchDist.current = null;
     };
 
     cv.addEventListener('mousedown', onMouseDown);
@@ -403,6 +501,11 @@ const StructuralChart = ({ data, symbol }) => {
     cv.addEventListener('wheel', onWheel, { passive: false });
     cv.addEventListener('dblclick', onDoubleClick);
 
+    cv.addEventListener('touchstart', onTouchStart, { passive: false });
+    cv.addEventListener('touchmove', onTouchMove, { passive: false });
+    cv.addEventListener('touchend', onTouchEnd);
+    cv.addEventListener('touchcancel', onTouchEnd);
+
     return () => {
       cv.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mouseup', onMouseUp);
@@ -410,11 +513,16 @@ const StructuralChart = ({ data, symbol }) => {
       cv.removeEventListener('mousemove', onMouseMove);
       cv.removeEventListener('wheel', onWheel);
       cv.removeEventListener('dblclick', onDoubleClick);
+      
+      cv.removeEventListener('touchstart', onTouchStart);
+      cv.removeEventListener('touchmove', onTouchMove);
+      cv.removeEventListener('touchend', onTouchEnd);
+      cv.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [draw]);
+  }, [draw, isMobile]);
 
   return (
-    <div ref={wrapRef} style={{ width: '100%', height: '100%' }}>
+    <div ref={wrapRef} style={{ width: '100%', height: '100%', touchAction: 'none' }}>
       <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
     </div>
   );
@@ -422,6 +530,7 @@ const StructuralChart = ({ data, symbol }) => {
 
 // ─── Dashboard Core (Protected & Tiered) ──────────────────────────────────────
 function DashboardCore({ user }) {
+  const isMobile = useIsMobile();
   const [marketData,  setMarketData]  = useState(SIM);
   const [connected,   setConnected]   = useState(false);
   const [sym,         setSym]         = useState('GBPUSD');
@@ -473,8 +582,15 @@ function DashboardCore({ user }) {
     <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', overflowX: 'hidden' }}>
       
       {/* ─── NAV BAR ─── */}
-      <nav style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.05)', position: 'sticky', top: 0, zIndex: 50 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <nav style={{ 
+        minHeight: 60, display: 'flex', flexDirection: isMobile ? 'column' : 'row', 
+        alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'space-between', 
+        padding: isMobile ? '12px 16px' : '0 24px', background: 'rgba(15,23,42,0.6)', 
+        backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.05)', 
+        position: 'sticky', top: 0, zIndex: 50, gap: isMobile ? 12 : 0 
+      }}>
+        
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'center' : 'flex-start', gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(56,189,248,0.2)' }}>
             <Activity style={{ width: 18, height: 18, color: '#020617' }} />
           </div>
@@ -483,10 +599,16 @@ function DashboardCore({ user }) {
           </span>
         </div>
 
-        <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)' }}>
+        {/* Scrollable Symbol Selector for Mobile */}
+        <div style={{ 
+          display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, 
+          border: '1px solid rgba(255,255,255,0.05)', overflowX: 'auto', whiteSpace: 'nowrap', 
+          maxWidth: '100%', WebkitOverflowScrolling: 'none', msOverflowStyle: 'none' 
+        }}>
           {syms.map(s => (
             <button key={s} onClick={() => setSym(s)} style={{
-              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', 
+              border: 'none', transition: 'all 0.2s', flexShrink: 0,
               background: sym === s ? 'rgba(56,189,248,0.15)' : 'transparent',
               color: sym === s ? '#38bdf8' : '#64748b',
             }}>
@@ -495,33 +617,34 @@ function DashboardCore({ user }) {
           ))}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          {/* MOCK STRIPE TOGGLE */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'space-between' : 'flex-end', gap: 12 }}>
           <button onClick={() => setIsSubscribed(!isSubscribed)} style={{ background: isSubscribed ? 'rgba(16,185,129,0.1)' : 'rgba(99,91,255,0.1)', color: isSubscribed ? '#10b981' : '#818cf8', border: `1px solid ${isSubscribed ? 'rgba(16,185,129,0.2)' : 'rgba(99,91,255,0.2)'}`, padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
             {isSubscribed ? '✅ PRO ACTIVE' : '🔥 UPGRADE TO PRO'}
           </button>
           
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.03)', padding: '6px 16px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.05)' }}>
-            <User style={{ width: 14, height: 14, color: '#94a3b8' }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{user?.email || 'Guest'}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.03)', padding: '6px 16px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.05)' }}>
+              <User style={{ width: 14, height: 14, color: '#94a3b8' }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', maxWidth: isMobile ? 80 : 'auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || 'Guest'}</span>
+            </div>
+            <button onClick={() => signOut(auth)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+              <LogOut style={{ width: 14, height: 14 }} /> {!isMobile && 'Logout'}
+            </button>
           </div>
-          <button onClick={() => signOut(auth)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
-            <LogOut style={{ width: 14, height: 14 }} /> Logout
-          </button>
         </div>
       </nav>
 
       {/* ─── MAIN BENTO GRID ─── */}
-      <div style={{ maxWidth: 1600, margin: '0 auto', padding: '24px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
+      <div style={{ maxWidth: 1600, margin: '0 auto', padding: isMobile ? '16px' : '24px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
         
         {/* LEFT COLUMN */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', minWidth: 0 }}>
           
-          {/* Chart Card (Always Unlocked for Trial) */}
-          <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {/* Chart Card */}
+          <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', overflow: 'hidden', display: 'flex', flexDirection: 'column', width: '100%' }}>
+            <div style={{ padding: isMobile ? '16px' : '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 12 : 0 }}>
               <div>
-                <h1 style={{ fontSize: 28, fontWeight: 900, color: '#fff', margin: '0 0 8px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <h1 style={{ fontSize: isMobile ? 24 : 28, fontWeight: 900, color: '#fff', margin: '0 0 8px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
                   {sym} <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: 6 }}>M15 MAP</span>
                 </h1>
                 <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
@@ -529,22 +652,22 @@ function DashboardCore({ user }) {
                   <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>STRUCTURE</span> <span style={{ color: '#cbd5e1', fontWeight: 800 }}>{data.m15_structure}</span></div>
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
+              <div style={{ textAlign: isMobile ? 'left' : 'right' }}>
                 <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 4 }}>LIVE PRICE</div>
-                <div style={{ fontSize: 28, fontFamily: 'monospace', fontWeight: 800, color: '#38bdf8' }}>{priceStr}</div>
+                <div style={{ fontSize: isMobile ? 24 : 28, fontFamily: 'monospace', fontWeight: 800, color: '#38bdf8' }}>{priceStr}</div>
               </div>
             </div>
 
-            <div style={{ height: 500, width: '100%', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 10, fontSize: 11, color: '#64748b', background: 'rgba(15,23,42,0.8)', padding: '4px 8px', borderRadius: 6 }}>
-                💡 Scroll to zoom | Drag chart to pan | Drag Y-Axis to stretch | Dbl-Click to reset
+            <div style={{ height: isMobile ? 350 : 500, width: '100%', position: 'relative' }}>
+              <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 10, fontSize: 10, color: '#64748b', background: 'rgba(15,23,42,0.8)', padding: '4px 8px', borderRadius: 6 }}>
+                💡 Pinch/Scroll to zoom | Drag X to pan | Drag Y to stretch
               </div>
-              <StructuralChart data={data} symbol={sym} />
+              <StructuralChart data={data} symbol={sym} isMobile={isMobile} />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
               {[{l: 'True ATR', v: Number(data.atr).toFixed(5), c: '#f59e0b'}, {l: 'Bull TL', v: data.bull_tl?.valid ? 'Active' : 'Invalid', c: data.bull_tl?.valid ? '#10b981' : '#475569'}, {l: 'Bear TL', v: data.bear_tl?.valid ? 'Active' : 'Invalid', c: data.bear_tl?.valid ? '#f43f5e' : '#475569'}].map((s, i) => (
-                <div key={i} style={{ padding: '16px 24px', borderRight: i < 2 ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
+                <div key={i} style={{ padding: '16px 24px', borderRight: (!isMobile && i < 2) ? '1px solid rgba(255,255,255,0.03)' : 'none', borderBottom: (isMobile && i < 2) ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
                   <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 4 }}>{s.l}</div>
                   <div style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 700, color: s.c }}>{s.v}</div>
                 </div>
@@ -558,28 +681,28 @@ function DashboardCore({ user }) {
             
             {(!isHold && isSubscribed) && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: `linear-gradient(90deg, transparent, ${sigClr}, transparent)` }} />}
             
-            <div style={{ padding: 32 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+            <div style={{ padding: isMobile ? 24 : 32 }}>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 16 : 0, marginBottom: 24 }}>
                 <div>
                   <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Algorithmic Decision</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {!isHold && <Zap style={{ width: 28, height: 28, color: sigClr }} />}
-                    <span style={{ fontSize: 42, fontWeight: 900, color: sigClr, letterSpacing: '-0.02em', lineHeight: 1 }}>{data.signal.decision}</span>
+                    {!isHold && <Zap style={{ width: isMobile ? 24 : 28, height: isMobile ? 24 : 28, color: sigClr }} />}
+                    <span style={{ fontSize: isMobile ? 32 : 42, fontWeight: 900, color: sigClr, letterSpacing: '-0.02em', lineHeight: 1 }}>{data.signal.decision}</span>
                   </div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
+                <div style={{ textAlign: isMobile ? 'left' : 'right' }}>
                   <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Confluence Score</div>
-                  <div style={{ fontSize: 42, fontWeight: 900, color: data.signal.score >= 70 ? '#10b981' : '#f59e0b', lineHeight: 1 }}>
+                  <div style={{ fontSize: isMobile ? 32 : 42, fontWeight: 900, color: data.signal.score >= 70 ? '#10b981' : '#f59e0b', lineHeight: 1 }}>
                     {data.signal.score}<span style={{ fontSize: 20, color: '#475569' }}> /100</span>
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 16 }}>
                 {[{ l: 'Detected Regime', v: data.signal.regime }, { l: 'Execution Zone', v: data.signal.location }].map(({ l, v }) => (
                   <div key={l} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '16px', border: '1px solid rgba(255,255,255,0.03)' }}>
                     <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 6 }}>{l}</div>
-                    <div style={{ fontFamily: 'monospace', fontSize: 14, color: '#e2e8f0', fontWeight: 600 }}>{v}</div>
+                    <div style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{v}</div>
                   </div>
                 ))}
               </div>
@@ -595,7 +718,7 @@ function DashboardCore({ user }) {
         </div>
 
         {/* RIGHT COLUMN: ORDER FLOW (PAYWALLED) */}
-        <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 110px)', position: 'sticky', top: 84, overflow: 'hidden' }}>
+        <div style={{ position: isMobile ? 'relative' : 'sticky', top: isMobile ? 0 : 84, background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', height: isMobile ? 'auto' : 'calc(100vh - 110px)', overflow: 'hidden', width: '100%' }}>
           {!isSubscribed && paywallOverlay}
           
           <div style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
@@ -663,9 +786,10 @@ function DashboardCore({ user }) {
 
 // ─── Landing Page (Marketing) ─────────────────────────────────────────────────
 function LandingPage({ onNavigate }) {
+  const isMobile = useIsMobile();
   return (
     <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+      <nav style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: isMobile ? 16 : 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Activity style={{ width: 18, height: 18, color: '#020617' }} />
@@ -678,20 +802,20 @@ function LandingPage({ onNavigate }) {
         </div>
       </nav>
 
-      <main style={{ padding: '80px 20px', textAlign: 'center', maxWidth: 1000, margin: '0 auto' }}>
+      <main style={{ padding: isMobile ? '40px 20px' : '80px 20px', textAlign: 'center', maxWidth: 1000, margin: '0 auto' }}>
         <div style={{ display: 'inline-block', background: 'rgba(56,189,248,0.1)', color: '#38bdf8', padding: '6px 16px', borderRadius: 999, fontSize: 13, fontWeight: 700, marginBottom: 24, border: '1px solid rgba(56,189,248,0.2)' }}>
           🚀 Version 4.9 Cloud Engine is Live
         </div>
-        <h1 style={{ fontSize: 64, fontWeight: 900, lineHeight: 1.1, marginBottom: 24, letterSpacing: '-0.04em' }}>
+        <h1 style={{ fontSize: isMobile ? 40 : 64, fontWeight: 900, lineHeight: 1.1, marginBottom: 24, letterSpacing: '-0.04em' }}>
           Institutional-Grade <br/>
           <span style={{ color: '#38bdf8' }}>Market Structure</span> Analysis.
         </h1>
-        <p style={{ fontSize: 20, color: '#94a3b8', maxWidth: 600, margin: '0 auto 40px auto', lineHeight: 1.6 }}>
+        <p style={{ fontSize: isMobile ? 16 : 20, color: '#94a3b8', maxWidth: 600, margin: '0 auto 40px auto', lineHeight: 1.6 }}>
           Stop trading blind. Our Python-backed algorithmic engine maps real-time structural geometry, Volume Spread Analysis (VSA), and automated signals directly to your dashboard.
         </p>
         
-        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 80 }}>
-          <button onClick={() => onNavigate('auth', false)} style={{ background: '#f8fafc', color: '#020617', border: 'none', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 16, justifyContent: 'center', marginBottom: 80 }}>
+          <button onClick={() => onNavigate('auth', false)} style={{ background: '#f8fafc', color: '#020617', border: 'none', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             Start 7-Day Free Trial <ArrowRight style={{ width: 18, height: 18 }} />
           </button>
           <button onClick={() => onNavigate('auth', true)} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: 'pointer' }}>
@@ -699,7 +823,7 @@ function LandingPage({ onNavigate }) {
           </button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, textAlign: 'left' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 24, textAlign: 'left' }}>
           <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
             <BarChart2 style={{ width: 32, height: 32, color: '#38bdf8', marginBottom: 16 }} />
             <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Dynamic Geometry</h3>
@@ -723,6 +847,7 @@ function LandingPage({ onNavigate }) {
 
 // ─── Main Router App ──────────────────────────────────────────────────────────
 export default function App() {
+  const isMobile = useIsMobile();
   const [view, setView] = useState('landing'); 
   const [isLoginMode, setIsLoginMode] = useState(true);
   
@@ -785,12 +910,12 @@ export default function App() {
 
   // Auth View
   return (
-    <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <button onClick={() => setView('landing')} style={{ position: 'absolute', top: 30, left: 30, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+    <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif', padding: 16 }}>
+      <button onClick={() => setView('landing')} style={{ position: 'absolute', top: isMobile ? 16 : 30, left: isMobile ? 16 : 30, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
         ← Back to Home
       </button>
 
-      <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', padding: '40px', borderRadius: 24, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}>
+      <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', padding: isMobile ? '30px 20px' : '40px', borderRadius: 24, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 32 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Activity style={{ width: 24, height: 24, color: '#020617' }} />
