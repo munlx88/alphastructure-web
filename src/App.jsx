@@ -7,7 +7,7 @@ import { Activity, Zap, Server, Target, Crosshair, Lock, User, LogOut, CreditCar
 // ─── Firebase ─────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
-  authDomain: "alphastructure.firebaseapp.com",
+  authDomain: "alphastructure.io",
   projectId: "alphastructure",
   storageBucket: "alphastructure.firebasestorage.app",
   messagingSenderId: "962716149021",
