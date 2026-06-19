@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import * as d3 from 'd3';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
-import { Activity, Server, Crosshair, Zap } from 'lucide-react';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { Activity, Zap, Server, Target, Crosshair, Lock, User, LogOut, CreditCard, ChevronRight, BarChart2, Cpu, Shield, ArrowRight } from 'lucide-react';
 
-// ============================================================================
-// FIREBASE CONFIG
-// ============================================================================
+// ─── Firebase ─────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
   authDomain: "alphastructure.firebaseapp.com",
@@ -15,592 +13,641 @@ const firebaseConfig = {
   messagingSenderId: "962716149021",
   appId: "1:962716149021:web:d7dd8f55a09b11ce54adf4",
 };
-let db = null;
-try { const app = initializeApp(firebaseConfig); db = getFirestore(app); } catch (e) {}
 
-// ============================================================================
-// SEEDED CANDLE GENERATOR  (consistent preview per symbol)
-// ============================================================================
+let db = null;
+let auth = null;
+try { 
+  const app = initializeApp(firebaseConfig); 
+  db = getFirestore(app); 
+  auth = getAuth(app);
+} catch (e) {}
+
+// ─── Seeded RNG + 200 Candle Generator (Allows Panning) ──────────────────────
 function seededRng(seed) {
   let s = seed;
   return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
 }
-
-const _candleCache = {};
-function getSimCandles(symbol, basePrice, dir = 'DOWN', count = 65) {
-  if (_candleCache[symbol]) return _candleCache[symbol];
-  const rng  = seededRng(symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0));
-  const now  = Math.floor(Date.now() / 1000);
-  const M15  = 900;
-  const trend = dir === 'DOWN' ? -0.00038 : 0.00042;
-  let price  = dir === 'DOWN' ? basePrice * 1.028 : basePrice * 0.972;
-  const out  = [];
-  for (let i = count - 1; i >= 0; i--) {
-    const noise = (rng() - 0.48) * 0.0014;
-    const open  = price;
-    const close = price * (1 + trend + noise);
-    const wick  = Math.abs(open - close) * (0.3 + rng() * 0.7);
-    out.push({
-      t: now - i * M15,
-      o: open,  h: Math.max(open, close) + wick * rng(),
-      l: Math.min(open, close) - wick * rng(),  c: close,
-      v: Math.floor(rng() * 8000 + 1200),
+const _cc = {};
+function getSimCandles(sym, base, dir = 'DOWN', n = 200) {
+  if (_cc[sym]) return _cc[sym];
+  const rng = seededRng(sym.split('').reduce((a, c) => a + c.charCodeAt(0), 0));
+  const now = Math.floor(Date.now() / 1000), M = 900;
+  const trend = dir === 'DOWN' ? -0.00015 : 0.00018;
+  let p = dir === 'DOWN' ? base * 1.04 : base * 0.96;
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const noise = (rng() - 0.48) * 0.0016;
+    const o = p, c = p * (1 + trend + noise);
+    const wick = Math.abs(o - c) * (0.3 + rng() * 1.2);
+    out.push({ 
+      t: now - i * M, o, 
+      h: Math.max(o, c) + wick * rng(), 
+      l: Math.min(o, c) - wick * rng(), 
+      c, 
+      v: Math.floor(rng() * 8000 + 1200) 
     });
-    price = close;
+    p = c;
   }
-  _candleCache[symbol] = out;
+  _cc[sym] = out;
   return out;
 }
 
-// ============================================================================
-// SIMULATED DATA  (fallback until Python bot syncs candles)
-// ============================================================================
-const SYMBOL_CFG = {
-  BTCUSD: { price: 105420,   dir: 'DOWN', atr: 450    },
+// ─── Symbol config + simulated data ──────────────────────────────────────────
+const SCFG = {
+  GBPUSD: { price: 1.32060,  dir: 'DOWN', atr: 0.00052 },
+  BTCUSD: { price: 62761.91, dir: 'DOWN', atr: 450    },
   US30:   { price: 51744,    dir: 'UP',   atr: 87      },
-  XAUUSD: { price: 4215,     dir: 'DOWN', atr: 8.33   },
+  XAUUSD: { price: 2515.30,  dir: 'UP',   atr: 8.33   },
   EURUSD: { price: 1.14594,  dir: 'DOWN', atr: 0.0007 },
-  GBPUSD: { price: 1.28450,  dir: 'DOWN', atr: 0.0009 },
   USDJPY: { price: 144.85,   dir: 'UP',   atr: 0.25   },
   GBPJPY: { price: 185.50,   dir: 'DOWN', atr: 0.32   },
   USOIL:  { price: 68.40,    dir: 'DOWN', atr: 0.45   },
 };
-
 function buildSim(sym) {
-  const { price, dir, atr } = SYMBOL_CFG[sym];
-  const candles = getSimCandles(sym, price, dir, 65);
-  const range   = price * 0.055;
-  const pH = price * (dir === 'DOWN' ? 1.04 : 1.02);
-  const pL = price * (dir === 'DOWN' ? 0.98 : 0.97);
-  const f50  = dir === 'UP' ? pH - range * 0.500 : pL + range * 0.500;
-  const f618 = dir === 'UP' ? pH - range * 0.618 : pL + range * 0.618;
-  const f786 = dir === 'UP' ? pH - range * 0.786 : pL + range * 0.786;
-  const now  = Math.floor(Date.now() / 1000);
-  const M    = 900;
+  const { price, dir, atr } = SCFG[sym];
+  const candles = getSimCandles(sym, price, dir, 200);
+  const range = price * 0.015, pH = price * (dir === 'DOWN' ? 1.008 : 1.004), pL = price * (dir === 'DOWN' ? 0.992 : 0.996);
+  const now = Math.floor(Date.now() / 1000), M = 900;
   return {
     price, atr, dominant_dir: dir,
-    htf_bias:      dir === 'UP' ? 'BULLISH' : 'BEARISH',
+    htf_bias: dir === 'UP' ? 'BULLISH' : 'BEARISH',
     m15_structure: dir === 'DOWN' ? 'DOWNTREND' : 'UPTREND',
-    fib_50: f50, fib_618: f618, fib_786: f786,
+    fib_50: dir === 'UP' ? pH - range * 0.5  : pL + range * 0.5,
+    fib_618: dir === 'UP' ? pH - range * 0.618 : pL + range * 0.618,
+    fib_786: dir === 'UP' ? pH - range * 0.786 : pL + range * 0.786,
     p_range: { high: pH, low: pL },
-    bear_tl: dir === 'DOWN' ? {
-      valid: true,
-      pts: [{ ts: now - 55*M, price: pH * 0.997 }, { ts: now - 20*M, price: pH * 0.977 }],
-      projected_price: pH * 0.963,
-    } : { valid: false, pts: [] },
-    bull_tl: dir === 'UP' ? {
-      valid: true,
-      pts: [{ ts: now - 50*M, price: pL * 1.004 }, { ts: now - 22*M, price: pL * 1.014 }],
-      projected_price: pL * 1.022,
-    } : { valid: false, pts: [] },
-    swing_highs: [
-      { t: now - 52*M, p: price * 1.020 },
-      { t: now - 24*M, p: price * 1.013 },
-    ],
-    swing_lows: [
-      { t: now - 42*M, p: price * 0.984 },
-      { t: now - 14*M, p: price * 0.988 },
-    ],
-    signal: {
-      decision: 'HOLD', score: 0, regime: 'PREVIEW', location: 'MIDDLE',
-      thesis: 'Simulated preview mode — add candle sync to Python bot for live chart data.',
-    },
-    positions: [], orders: [], candles,
+    bear_tl: dir === 'DOWN' ? { valid: true, pts: [{ ts: now - 55 * M, price: pH * 0.997 }, { ts: now - 20 * M, price: pH * 0.991 }], projected_price: pH * 0.988 } : { valid: false, pts: [] },
+    bull_tl: dir === 'UP'   ? { valid: true, pts: [{ ts: now - 50 * M, price: pL * 1.002 }, { ts: now - 22 * M, price: pL * 1.006 }], projected_price: pL * 1.009 } : { valid: false, pts: [] },
+    swing_highs: [{ t: now - 52 * M, p: price * 1.005 }, { t: now - 24 * M, p: price * 1.002 }],
+    swing_lows:  [{ t: now - 42 * M, p: price * 0.996 }, { t: now - 14 * M, p: price * 0.998 }],
+    signal: { decision: 'HOLD', score: 55, regime: 'DOWN_IMPULSE', location: 'DISCOUNT FLOOR', thesis: 'Score 55/100 < 70 gate. HTF: BEARISH | M15: DOWNTREND | VSA: NEUTRAL | TL: None [Bear Reject] [Bull Reject]' },
+    positions: [{ ticket: 101, type: "SHORT", volume: 0.5, open_price: price*1.002, sl: price*1.005, tp: price*0.990, pnl: 450.20 }], 
+    orders: [{ ticket: 202, type: "SELL LIMIT", volume: 1.0, open_price: price*1.004, sl: price*1.007, tp: price*0.988 }], 
+    candles,
   };
 }
+const SIM = Object.fromEntries(Object.keys(SCFG).map(s => [s, buildSim(s)]));
 
-const SIM = Object.fromEntries(Object.keys(SYMBOL_CFG).map(s => [s, buildSim(s)]));
-
-// ============================================================================
-// D3 STRUCTURAL CHART
-// ============================================================================
+// ─── Interactive Pure HTML5 Canvas Chart ──────────────────────────────────────
 const StructuralChart = ({ data, symbol }) => {
-  const wrapRef = useRef(null);
-  const svgRef  = useRef(null);
+  const wrapRef   = useRef(null);
+  const canvasRef = useRef(null);
+  
+  const panRef = useRef(0);
+  const zoomRef = useRef(50);
+  const mouseRef = useRef(null);
+  const yStretchRef = useRef(1.0);
+  const yOffsetRef = useRef(0.0);
+  const pricePerPixelRef = useRef(0.0);
+  const isDraggingX = useRef(false);
+  const isDraggingY = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartY = useRef(0);
+  const dragStartStretch = useRef(1.0);
+  const dragStartOffset = useRef(0.0);
 
   const draw = useCallback(() => {
-    if (!wrapRef.current || !data) return;
-    const candles = (data.candles && data.candles.length > 0)
-      ? data.candles
-      : getSimCandles(symbol, data.price || 1, data.dominant_dir || 'DOWN', 65);
+    if (!wrapRef.current || !data || !canvasRef.current) return;
+    const totalCandles = (data.candles?.length > 0) ? data.candles : getSimCandles(symbol, data.price || 1, data.dominant_dir || 'DOWN', 200);
+    if (!totalCandles.length) return;
 
-    const TW    = wrapRef.current.clientWidth || 720;
-    const MH    = 370;   // main panel height
-    const VH    = 68;    // volume panel height
-    const TOTAL = MH + VH + 22;
-    const ml = 6, mr = 80, mt = 28, mb = 2;
-    const W  = TW - ml - mr;
+    const TW  = wrapRef.current.clientWidth;
+    const TH  = wrapRef.current.clientHeight;
+    const VH  = 60;   
+    const XH  = 24;   
+    const GAP = 8;
+    const MH  = TH - VH - XH - GAP;  
+    const ml = 10, mr = 80, mt = 20, mb = VH + XH + GAP;
+    const W   = TW - ml - mr;
+    const dpr = window.devicePixelRatio || 1;
 
-    const sv = d3.select(svgRef.current);
-    sv.selectAll('*').remove();
-    sv.attr('width', TW).attr('height', TOTAL)
-      .style('background', '#060b14').style('display', 'block');
+    const cv = canvasRef.current;
+    cv.width  = TW * dpr; cv.height = TH * dpr;
+    cv.style.width = `${TW}px`; cv.style.height = `${TH}px`;
+    const ctx = cv.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, TW, TH);
 
-    const g = sv.append('g').attr('transform', `translate(${ml},${mt})`);
+    let visibleCount = Math.min(zoomRef.current, totalCandles.length);
+    const maxPan = Math.max(0, totalCandles.length - visibleCount);
+    let currentPan = Math.min(Math.max(0, panRef.current), maxPan);
+    panRef.current = currentPan;
 
-    // ── Price domain ─────────────────────────────────────────────────────────
+    const startIndex = totalCandles.length - visibleCount - currentPan;
+    const endIndex = totalCandles.length - currentPan;
+    const candles = totalCandles.slice(Math.max(0, startIndex), endIndex);
+
     const cpx = candles.flatMap(c => [c.h, c.l]);
-    const lpx = [
-      data.fib_50, data.fib_618, data.fib_786,
-      data.p_range?.high, data.p_range?.low, data.price,
-      ...(data.positions || []).flatMap(p => [p.open_price, p.sl, p.tp]),
-      ...(data.orders    || []).flatMap(o => [o.open_price, o.sl, o.tp]),
-    ].filter(v => v && v > 0);
-    const yMin = d3.min([...cpx, ...lpx]) * 0.9996;
-    const yMax = d3.max([...cpx, ...lpx]) * 1.0004;
+    const lpx = [data.fib_50, data.fib_618, data.fib_786, data.p_range?.high, data.p_range?.low, data.price].filter(v => v && v > 0);
+    
+    const rawMin = Math.min(...cpx, ...lpx);
+    const rawMax = Math.max(...cpx, ...lpx);
+    const rawRange = (rawMax - rawMin) || 1;
+    
+    const autoMin = rawMin - rawRange * 0.05;
+    const autoMax = rawMax + rawRange * 0.05;
+    
+    const midY = (autoMax + autoMin) / 2;
+    const stretchedRange = (autoMax - autoMin) * yStretchRef.current;
+    
+    const yMin = midY - stretchedRange / 2 + yOffsetRef.current;
+    const yMax = midY + stretchedRange / 2 + yOffsetRef.current;
 
-    const xSc = d3.scaleBand().domain(d3.range(candles.length)).range([0, W]).padding(0.18);
-    const ySc = d3.scaleLinear().domain([yMin, yMax]).range([MH, 0]);
+    pricePerPixelRef.current = stretchedRange / MH;
 
-    // ── Grid ─────────────────────────────────────────────────────────────────
-    ySc.ticks(8).forEach(v => {
-      g.append('line').attr('x1', 0).attr('x2', W)
-       .attr('y1', ySc(v)).attr('y2', ySc(v))
-       .attr('stroke', 'rgba(51,65,85,0.22)').attr('stroke-width', 1);
-    });
+    const n = candles.length;
+    const xBand = W / n, xPad = xBand * 0.2, bw = Math.max(1, xBand - xPad * 2);
+    const xOf  = i  => ml + i * xBand + xPad;
+    const xMid = i  => ml + i * xBand + xBand / 2;
+    const yOf  = p  => mt + (1 - (p - yMin) / (yMax - yMin)) * MH;
 
-    // ── Horizontal line helper ────────────────────────────────────────────────
-    const hLine = (price, color, dash = '', lw = 1, label = null) => {
-      if (!price || price < yMin * 0.998 || price > yMax * 1.002) return;
-      g.append('line').attr('x1', 0).attr('x2', W)
-        .attr('y1', ySc(price)).attr('y2', ySc(price))
-        .attr('stroke', color).attr('stroke-width', lw).attr('stroke-dasharray', dash);
-      if (label) {
-        g.append('text').attr('x', W + 4).attr('y', ySc(price) + 4)
-          .attr('fill', color).attr('font-size', 10).attr('font-family', 'monospace')
-          .text(label);
+    const getXFromTime = (ts) => {
+      let bestI = 0, minD = Infinity;
+      for (let i = 0; i < totalCandles.length; i++) {
+        const d = Math.abs((totalCandles[i].t || totalCandles[i].ts) - ts);
+        if (d < minD) { minD = d; bestI = i; }
       }
+      const local_i = bestI - startIndex;
+      return ml + local_i * xBand + xBand / 2;
     };
 
-    // ── Range anchors ─────────────────────────────────────────────────────────
-    const pH = data.p_range?.high || yMax;
-    const pL = data.p_range?.low  || yMin;
-    hLine(pH, 'rgba(148,163,184,0.35)', '5 4', 1, '0.0% Anchor');
-    hLine(pL, 'rgba(148,163,184,0.35)', '5 4', 1, '100.0% Anchor');
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 1;
+    for (let i = 0; i <= 6; i++) {
+      const y = yOf(yMin + (yMax - yMin) * i / 6);
+      ctx.beginPath(); ctx.moveTo(ml, y); ctx.lineTo(ml + W, y); ctx.stroke();
+    }
 
-    // ── Golden zone ───────────────────────────────────────────────────────────
+    ctx.fillStyle = '#64748b'; ctx.font = '10px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const labelStep = Math.max(1, Math.floor(n / 8)); 
+    candles.forEach((c, i) => {
+      if (i % labelStep === 0 || i === candles.length -1) { 
+        const date = new Date(c.t * 1000);
+        const timeStr = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        ctx.fillText(timeStr, xMid(i), TH - (XH / 2));
+        
+        ctx.beginPath(); ctx.moveTo(xMid(i), mt); ctx.lineTo(xMid(i), TH - XH); 
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.stroke();
+      }
+    });
+
+    const hLine = (price, color, dash = [], lw = 1, label = null) => {
+      if (!price || price < yMin || price > yMax) return;
+      const y = yOf(price);
+      ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = lw;
+      if (dash.length) ctx.setLineDash(dash);
+      ctx.beginPath(); ctx.moveTo(ml, y); ctx.lineTo(ml + W, y); ctx.stroke();
+      ctx.setLineDash([]);
+      if (label) { ctx.fillStyle = color; ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.fillText(label, ml + W + 6, y); }
+      ctx.restore();
+    };
+
+    const drawBand = (a, b, fill) => {
+      const top = yOf(Math.max(a, b)), bot = yOf(Math.min(a, b));
+      if (bot < mt || top > mt + MH) return;
+      ctx.fillStyle = fill; ctx.fillRect(ml, Math.max(top, mt), W, Math.min(bot, mt + MH) - Math.max(top, mt));
+    };
+
     if (data.fib_50 && data.fib_618) {
-      const bTop = Math.min(ySc(Math.max(data.fib_50, data.fib_618)), MH);
-      const bBot = Math.max(ySc(Math.min(data.fib_50, data.fib_618)), 0);
-      g.append('rect').attr('x', 0).attr('width', W)
-        .attr('y', bTop).attr('height', Math.max(0, bBot - bTop))
-        .attr('fill', 'rgba(234,179,8,0.09)');
-      hLine(data.fib_618, '#f59e0b', '', 1.5, '61.8% Golden');
-      hLine(data.fib_50,  '#facc15', '5 4', 1, '50.0% Equilibrium');
+      drawBand(data.fib_50, data.fib_618, 'rgba(234,179,8,0.05)');
+      hLine(data.fib_618, '#d97706', [], 1.5, '61.8% Golden');
+      hLine(data.fib_50,  '#ca8a04', [4, 4], 1,   '50.0% Eq');
     }
-
-    // ── OTE zone ──────────────────────────────────────────────────────────────
     if (data.fib_618 && data.fib_786) {
-      const bTop = Math.min(ySc(Math.max(data.fib_618, data.fib_786)), MH);
-      const bBot = Math.max(ySc(Math.min(data.fib_618, data.fib_786)), 0);
-      g.append('rect').attr('x', 0).attr('width', W)
-        .attr('y', bTop).attr('height', Math.max(0, bBot - bTop))
-        .attr('fill', 'rgba(249,115,22,0.07)');
-      hLine(data.fib_786, '#f97316', '5 4', 1, '78.6% Deep OTE');
+      drawBand(data.fib_618, data.fib_786, 'rgba(234,88,12,0.05)');
+      hLine(data.fib_786, '#ea580c', [4, 4], 1, '78.6% OTE');
     }
+    hLine(data.p_range?.high, 'rgba(100,116,139,0.3)', [2, 2], 1, '0.0% Anchor');
+    hLine(data.p_range?.low,  'rgba(100,116,139,0.3)', [2, 2], 1, '100.0% Anchor');
 
-    // ── Trendlines ────────────────────────────────────────────────────────────
     const drawTL = (tl, color) => {
       if (!tl?.valid || !tl.pts?.length) return;
-      const findI = ts => {
-        let b = 0, md = Infinity;
-        candles.forEach((c, i) => { const d = Math.abs(c.t - ts); if (d < md) { md = d; b = i; } });
-        return b;
-      };
-      const pt1  = tl.pts[0];
-      const ts1  = pt1.ts ?? pt1.t;
-      const p1   = pt1.price ?? pt1.p;
-      const i1   = findI(ts1);
-      const x1   = xSc(i1) + xSc.bandwidth() / 2;
-      const y1   = ySc(p1);
-      const x2   = xSc(candles.length - 1) + xSc.bandwidth() / 2;
-      const y2   = tl.projected_price ? ySc(tl.projected_price) : y1;
-      if ([x1, y1, x2, y2].some(isNaN)) return;
-      if (y1 < -60 || y1 > MH + 60 || y2 < -60 || y2 > MH + 60) return;
-      g.append('line')
-        .attr('x1', x1).attr('y1', y1).attr('x2', x2).attr('y2', y2)
-        .attr('stroke', color).attr('stroke-width', 1.8)
-        .attr('stroke-dasharray', '9 5').attr('opacity', 0.9);
+      const pt1 = tl.pts[0];
+      const ts1 = pt1.ts ?? pt1.t;
+      const p1 = pt1.price ?? pt1.p;
+      const x1 = getXFromTime(ts1);
+      const y1 = yOf(p1);
+      const x2 = getXFromTime(totalCandles[totalCandles.length - 1].t);
+      const y2 = yOf(tl.projected_price || p1);
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.globalAlpha = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.restore();
     };
-    drawTL(data.bear_tl, '#2dd4bf');
-    drawTL(data.bull_tl, '#34d399');
+    drawTL(data.bear_tl, '#f43f5e'); 
+    drawTL(data.bull_tl, '#10b981'); 
 
-    // ── Position / order lines ────────────────────────────────────────────────
-    (data.positions || []).forEach(pos => {
-      const col = pos.type === 'LONG' ? '#10b981' : '#f43f5e';
-      hLine(pos.open_price, col, '', 1.5);
-      if (pos.sl) hLine(pos.sl, '#f43f5e', '3 3');
-      if (pos.tp) hLine(pos.tp, '#10b981', '3 3');
-    });
-    (data.orders || []).forEach(ord => {
-      const col = ord.type?.includes('BUY') ? '#34d399' : '#fb7185';
-      hLine(ord.open_price, col, '6 4', 1.5);
-      if (ord.sl) hLine(ord.sl, '#f43f5e', '3 3');
-      if (ord.tp) hLine(ord.tp, '#10b981', '3 3');
-    });
-
-    // ── Candles ───────────────────────────────────────────────────────────────
     candles.forEach((c, i) => {
-      const bull = c.c >= c.o;
-      const col  = bull ? '#26a69a' : '#ef5350';
-      const x    = xSc(i);
-      const mx   = x + xSc.bandwidth() / 2;
-      g.append('line').attr('x1', mx).attr('x2', mx)
-        .attr('y1', ySc(c.h)).attr('y2', ySc(c.l))
-        .attr('stroke', col).attr('stroke-width', 1);
-      const bTop = ySc(Math.max(c.o, c.c));
-      const bBot = ySc(Math.min(c.o, c.c));
-      g.append('rect').attr('x', x).attr('y', bTop)
-        .attr('width', xSc.bandwidth())
-        .attr('height', Math.max(1, bBot - bTop))
-        .attr('fill', col).attr('opacity', 0.87);
+      const bull = c.c >= c.o, col = bull ? '#10b981' : '#f43f5e';
+      const x = xOf(i), mx = xMid(i);
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(mx, yOf(c.h)); ctx.lineTo(mx, yOf(c.l)); ctx.stroke();
+      const bTop = yOf(Math.max(c.o, c.c)), bBot = yOf(Math.min(c.o, c.c));
+      ctx.fillStyle = col; ctx.fillRect(x, bTop, bw, Math.max(1.5, bBot - bTop));
     });
 
-    // ── Swing markers ─────────────────────────────────────────────────────────
-    const swingMark = (pts, isHigh) => {
+    const mark = (pts, isHigh) => {
       (pts || []).forEach(s => {
         const ts = s.t ?? s.ts;
         const px = s.p ?? s.price;
-        if (!ts || !px || px < yMin || px > yMax) return;
-        let b = 0, md = Infinity;
-        candles.forEach((c, i) => { const d = Math.abs(c.t - ts); if (d < md) { md = d; b = i; } });
-        g.append('text')
-          .attr('x', xSc(b) + xSc.bandwidth() / 2)
-          .attr('y', ySc(px) + (isHigh ? -11 : 14))
-          .attr('text-anchor', 'middle')
-          .attr('fill', isHigh ? '#f472b6' : '#22d3ee')
-          .attr('font-size', 14)
-          .text(isHigh ? '▼' : '▲');
+        if (!ts || !px) return;
+        const x = getXFromTime(ts);
+        const y = yOf(px);
+        if (x >= ml - 20 && x <= ml + W + 20 && y >= mt - 20 && y <= mt + MH + 20) {
+          ctx.fillStyle = isHigh ? '#f472b6' : '#22d3ee';
+          ctx.font = '14px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(isHigh ? '▼' : '▲', x, y + (isHigh ? -14 : 14));
+        }
       });
     };
-    swingMark(data.swing_highs, true);
-    swingMark(data.swing_lows, false);
+    mark(data.swing_highs, true);
+    mark(data.swing_lows, false);
 
-    // ── Live price tag ────────────────────────────────────────────────────────
-    if (data.price && data.price >= yMin && data.price <= yMax) {
-      const py = ySc(data.price);
-      g.append('line').attr('x1', 0).attr('x2', W).attr('y1', py).attr('y2', py)
-        .attr('stroke', '#38bdf8').attr('stroke-width', 1)
-        .attr('stroke-dasharray', '3 4').attr('opacity', 0.75);
-      g.append('rect').attr('x', W + 2).attr('y', py - 9).attr('width', mr - 6).attr('height', 18)
-        .attr('fill', '#0e7490').attr('rx', 3);
-      g.append('text').attr('x', W + 5).attr('y', py + 4.5)
-        .attr('fill', '#e0f7ff').attr('font-size', 9.5)
-        .attr('font-family', 'monospace').attr('font-weight', 'bold')
-        .text(data.price > 999 ? data.price.toFixed(2) : data.price.toFixed(5));
+    if (currentPan === 0 && data.price && data.price >= yMin && data.price <= yMax) {
+      const py = yOf(data.price);
+      ctx.save();
+      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]); ctx.globalAlpha = 0.8;
+      ctx.beginPath(); ctx.moveTo(ml, py); ctx.lineTo(ml + W, py); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      
+      const pStr = data.price > 999 ? data.price.toFixed(2) : data.price.toFixed(5);
+      ctx.fillStyle = '#0369a1'; ctx.beginPath(); ctx.roundRect(ml + W + 4, py - 10, mr - 8, 20, 4); ctx.fill();
+      ctx.fillStyle = '#bae6fd'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left'; ctx.fillText(pStr, ml + W + 8, py);
+      ctx.restore();
     }
 
-    // ── Y axis ────────────────────────────────────────────────────────────────
-    const yAx = d3.axisRight(ySc).ticks(8)
-      .tickFormat(v => v > 999 ? v.toFixed(2) : v.toFixed(5));
-    g.append('g').attr('transform', `translate(${W},0)`).call(yAx)
-      .call(ax => ax.select('.domain').remove())
-      .call(ax => ax.selectAll('.tick line').remove())
-      .call(ax => ax.selectAll('text')
-        .attr('fill', '#475569').attr('font-size', 9.5)
-        .attr('font-family', 'monospace').attr('x', 5));
+    ctx.fillStyle = '#64748b'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+    for (let i = 0; i <= 6; i++) {
+      const v = yMin + (yMax - yMin) * i / 6;
+      ctx.fillText(v > 999 ? v.toFixed(2) : v.toFixed(5), ml + W + 6, yOf(v));
+    }
 
-    // ── Chart header ──────────────────────────────────────────────────────────
-    g.append('text').attr('x', 2).attr('y', -8)
-      .attr('fill', '#475569').attr('font-size', 11).attr('font-family', 'monospace')
-      .text(`Live Structural Map: ${symbol} (M15)  |  Validated Sequence: ${data.dominant_dir || 'N/A'}`);
-
-    // ── Volume panel ──────────────────────────────────────────────────────────
-    const vg  = sv.append('g').attr('transform', `translate(${ml},${MH + mt + 12})`);
-    const vMax = d3.max(candles, c => c.v) || 1;
-    const vSc  = d3.scaleLinear().domain([0, vMax]).range([VH, 0]);
+    const vOff = mt + MH + GAP;
+    const vMax  = Math.max(...candles.map(c => c.v), 1);
     candles.forEach((c, i) => {
       const bull = c.c >= c.o;
-      vg.append('rect').attr('x', xSc(i)).attr('y', vSc(c.v))
-        .attr('width', xSc.bandwidth())
-        .attr('height', Math.max(0, VH - vSc(c.v)))
-        .attr('fill', bull ? 'rgba(38,166,154,0.45)' : 'rgba(239,83,80,0.45)');
+      const barH = Math.max(1, (c.v / vMax) * (VH - 4));
+      ctx.fillStyle = bull ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)';
+      ctx.fillRect(xOf(i), vOff + VH - barH, bw, barH);
     });
-    vg.append('text').attr('x', 3).attr('y', 13)
-      .attr('fill', '#334155').attr('font-size', 9).attr('font-family', 'monospace')
-      .text('Tick Vol');
-    const vAx = d3.axisRight(vSc).ticks(3)
-      .tickFormat(v => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v);
-    vg.append('g').attr('transform', `translate(${W},0)`).call(vAx)
-      .call(ax => ax.select('.domain').remove())
-      .call(ax => ax.selectAll('.tick line').remove())
-      .call(ax => ax.selectAll('text')
-        .attr('fill', '#334155').attr('font-size', 9).attr('x', 4));
 
+    if (mouseRef.current) {
+      const {x, y} = mouseRef.current;
+      if (x >= ml && x <= ml + W && y >= mt && y <= TH - XH) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(x, mt); ctx.lineTo(x, TH - XH); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ml, y); ctx.lineTo(ml + W, y); ctx.stroke();
+        ctx.setLineDash([]);
+
+        const cIndex = Math.floor((x - ml) / xBand);
+        if (candles[cIndex]) {
+          const hoverC = candles[cIndex];
+          const hoverPrice = yMin + ((mt + MH - y) / MH) * (yMax - yMin);
+          
+          ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.roundRect(ml + W + 4, y - 10, mr - 8, 20, 4); ctx.fill();
+          ctx.fillStyle = '#f8fafc'; ctx.fillText(hoverPrice > 999 ? hoverPrice.toFixed(2) : hoverPrice.toFixed(5), ml + W + 8, y);
+          
+          const d = new Date(hoverC.t * 1000);
+          const tStr = `${d.getDate()}/${d.getMonth()+1} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+          ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.roundRect(x - 35, TH - XH + 2, 70, 20, 4); ctx.fill();
+          ctx.fillStyle = '#f8fafc'; ctx.textAlign = 'center'; ctx.fillText(tStr, x, TH - (XH / 2) + 2);
+          
+          const infoStr = `O:${hoverC.o.toFixed(5)} H:${hoverC.h.toFixed(5)} L:${hoverC.l.toFixed(5)} C:${hoverC.c.toFixed(5)}`;
+          ctx.fillStyle = 'rgba(15,23,42,0.8)'; ctx.beginPath(); ctx.roundRect(ml + 10, mt + 10, 260, 24, 6); ctx.fill();
+          ctx.fillStyle = '#94a3b8'; ctx.textAlign = 'left'; ctx.fillText(infoStr, ml + 20, mt + 22);
+        }
+      }
+    }
   }, [data, symbol]);
 
   useEffect(() => {
     draw();
     if (!wrapRef.current) return;
-    const ro = new ResizeObserver(() => draw());
+    const ro = new ResizeObserver(draw);
     ro.observe(wrapRef.current);
     return () => ro.disconnect();
   }, [draw]);
 
-  const bullOk  = !!data?.bull_tl?.valid;
-  const bearOk  = !!data?.bear_tl?.valid;
-  const priceStr = data?.price > 999
-    ? Number(data.price).toFixed(2)
-    : Number(data?.price || 0).toFixed(5);
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+
+    const onMouseDown = (e) => { 
+      const rect = cv.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mr = 80;
+      if (mouseX > cv.clientWidth - mr) {
+        isDraggingY.current = true; dragStartY.current = e.clientY; dragStartStretch.current = yStretchRef.current;
+      } else {
+        isDraggingX.current = true; dragStartX.current = e.clientX; dragStartY.current = e.clientY; dragStartOffset.current = yOffsetRef.current;
+      }
+    };
+    const onMouseUp = () => { isDraggingX.current = false; isDraggingY.current = false; if (cv) cv.style.cursor = 'crosshair'; };
+    const onMouseLeave = () => { isDraggingX.current = false; isDraggingY.current = false; mouseRef.current = null; cv.style.cursor = 'default'; requestAnimationFrame(draw); };
+    
+    const onMouseMove = (e) => {
+      const rect = cv.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const TW = cv.clientWidth;
+      const mr = 80;
+      mouseRef.current = { x: mouseX, y: mouseY };
+
+      if (isDraggingY.current) {
+        cv.style.cursor = 'ns-resize';
+        const dy = e.clientY - dragStartY.current;
+        const factor = 1 + (dy / 200); 
+        yStretchRef.current = Math.max(0.05, Math.min(20, dragStartStretch.current * factor));
+      } else if (isDraggingX.current) {
+        cv.style.cursor = 'grabbing';
+        const dx = e.clientX - dragStartX.current;
+        const dy = e.clientY - dragStartY.current;
+        const W = TW - 10 - mr;
+        const xBand = W / Math.min(zoomRef.current, 200); 
+        const shift = Math.round(dx / Math.max(1, xBand)); 
+        if (Math.abs(shift) >= 1) { panRef.current += shift; dragStartX.current = e.clientX; }
+        yOffsetRef.current = dragStartOffset.current + (dy * pricePerPixelRef.current);
+      } else {
+        cv.style.cursor = mouseX > TW - mr ? 'ns-resize' : 'crosshair';
+      }
+      requestAnimationFrame(draw);
+    };
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      const speed = 0.1;
+      const zoomDelta = e.deltaY * speed;
+      zoomRef.current = Math.max(15, Math.min(200, zoomRef.current + zoomDelta));
+      requestAnimationFrame(draw);
+    };
+
+    const onDoubleClick = (e) => {
+      const rect = cv.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mr = 80;
+      if (mouseX > cv.clientWidth - mr) { yStretchRef.current = 1.0; yOffsetRef.current = 0.0; requestAnimationFrame(draw); } 
+      else { yStretchRef.current = 1.0; yOffsetRef.current = 0.0; panRef.current = 0; requestAnimationFrame(draw); }
+    };
+
+    cv.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp); 
+    cv.addEventListener('mouseleave', onMouseLeave);
+    cv.addEventListener('mousemove', onMouseMove);
+    cv.addEventListener('wheel', onWheel, { passive: false });
+    cv.addEventListener('dblclick', onDoubleClick);
+
+    return () => {
+      cv.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      cv.removeEventListener('mouseleave', onMouseLeave);
+      cv.removeEventListener('mousemove', onMouseMove);
+      cv.removeEventListener('wheel', onWheel);
+      cv.removeEventListener('dblclick', onDoubleClick);
+    };
+  }, [draw]);
 
   return (
-    <div className="w-full rounded-xl overflow-hidden border border-slate-800">
-      <div ref={wrapRef} className="w-full">
-        <svg ref={svgRef} style={{ width: '100%', display: 'block' }} />
-      </div>
-      {/* Stats bar — mirrors the Streamlit bottom strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-slate-800 border-t border-slate-800 bg-slate-950/80">
-        {[
-          { label: 'Live Current Price',    val: priceStr,                               col: 'text-white'                               },
-          { label: 'True ATR (Volatility)', val: Number(data?.atr || 0).toFixed(5),      col: 'text-amber-400'                           },
-          { label: 'Bull Trendline Status', val: bullOk ? 'Active' : 'Invalid',          col: bullOk ? 'text-emerald-400' : 'text-slate-500' },
-          { label: 'Bear Trendline Status', val: bearOk ? 'Active' : 'Invalid',          col: bearOk ? 'text-red-400'     : 'text-slate-500' },
-        ].map((s, i) => (
-          <div key={i} className="px-4 py-3">
-            <div className="text-[9px] text-slate-600 uppercase font-bold tracking-widest mb-1">{s.label}</div>
-            <div className={`font-mono font-bold text-sm ${s.col}`}>{s.val}</div>
-          </div>
-        ))}
-      </div>
+    <div ref={wrapRef} style={{ width: '100%', height: '100%' }}>
+      <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
     </div>
   );
 };
 
-// ============================================================================
-// MAIN DASHBOARD
-// ============================================================================
-export default function AlphaStructureDashboard() {
-  const [marketData,     setMarketData]    = useState(SIM);
-  const [isConnected,    setIsConnected]   = useState(false);
-  const [selectedSymbol, setSelectedSymbol] = useState('US30');
+// ─── Dashboard Core (Protected & Tiered) ──────────────────────────────────────
+function DashboardCore({ user }) {
+  const [marketData,  setMarketData]  = useState(SIM);
+  const [connected,   setConnected]   = useState(false);
+  const [sym,         setSym]         = useState('GBPUSD');
+  const [isSubscribed, setIsSubscribed] = useState(false); // MOCK STRIPE STATE
 
   useEffect(() => {
-    if (!db) return;
+    if (!db || !user) return;
     const unsub = onSnapshot(collection(db, 'market_data'), snap => {
       const nd = {};
       snap.forEach(doc => {
         const d = doc.data();
-        nd[doc.id] = {
-          ...(SIM[doc.id] || {}),          // fill in missing fields from sim
-          ...d,
-          // keep sim candles until bot sends real ones
-          candles: (d.candles?.length > 0) ? d.candles : (SIM[doc.id]?.candles || []),
-        };
+        nd[doc.id] = { ...(SIM[doc.id] || {}), ...d, candles: d.candles?.length > 0 ? d.candles : (SIM[doc.id]?.candles || []) };
       });
-      if (Object.keys(nd).length > 0) {
-        setMarketData(nd);
-        setIsConnected(true);
-        if (!nd[selectedSymbol]) setSelectedSymbol(Object.keys(nd)[0]);
-      }
+      if (Object.keys(nd).length > 0) { setMarketData(nd); setConnected(true); if (!nd[sym]) setSym(Object.keys(nd)[0]); }
     }, err => console.error(err));
     return () => unsub();
-  }, []);
+  }, [user, sym]);
 
-  const data = marketData[selectedSymbol];
-  const syms = Object.keys(marketData);
+  const data  = marketData[sym];
+  const syms  = Object.keys(marketData);
 
   if (!data) return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center">
-      <Activity className="w-8 h-8 animate-pulse mb-4 text-emerald-500" />
-      <span className="text-slate-400 tracking-widest uppercase text-sm font-bold">Awaiting Telemetry...</span>
+    <div style={{ height: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
+      <Activity style={{ width: 32, height: 32, color: '#38bdf8', animation: 'spin 2s linear infinite' }} />
+      <span style={{ color: '#64748b', fontSize: 13, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 600 }}>Syncing Telemetry...</span>
     </div>
   );
 
-  const isHold = data.signal.decision === 'HOLD';
-  const isBuy  = data.signal.decision.includes('BUY');
-  const sCl    = isHold ? 'text-slate-300'   : (isBuy ? 'text-emerald-400'      : 'text-rose-500');
-  const sBd    = isHold ? 'border-slate-800' : (isBuy ? 'border-emerald-500/50' : 'border-rose-500/50');
-  const sBg    = isHold ? 'bg-slate-900'     : (isBuy ? 'bg-emerald-500/10'     : 'bg-rose-500/10');
+  const isHold  = data.signal.decision === 'HOLD';
+  const isBuy   = data.signal.decision.includes('BUY');
+  const sigClr  = isHold ? '#94a3b8' : isBuy ? '#10b981' : '#f43f5e';
+  const priceStr = data.price > 999 ? Number(data.price).toFixed(2) : Number(data.price || 0).toFixed(5);
+  const biasCl = data.htf_bias === 'BULLISH' ? '#10b981' : data.htf_bias === 'BEARISH' ? '#f43f5e' : '#94a3b8';
+
+  const paywallOverlay = (
+    <div style={{ position: 'absolute', inset: 0, backdropFilter: 'blur(10px)', background: 'rgba(2,6,23,0.7)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 20, textAlign: 'center', padding: 24 }}>
+      <Lock style={{ width: 40, height: 40, color: '#38bdf8', marginBottom: 16 }} />
+      <h3 style={{ color: '#fff', fontSize: 20, fontWeight: 800, margin: '0 0 12px 0' }}>Pro Feature Locked</h3>
+      <p style={{ color: '#94a3b8', fontSize: 14, margin: '0 0 24px 0', lineHeight: 1.5 }}>
+        Subscribe to AlphaStructure Pro to unlock live algorithmic signals, confluence scores, and live order flow arrays.
+      </p>
+      <button onClick={() => setIsSubscribed(true)} style={{ background: '#635bff', color: '#fff', padding: '12px 24px', borderRadius: 8, fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <CreditCard style={{ width: 16, height: 16 }} /> Unlock Pro Access
+      </button>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 pb-20">
-
-      {/* ── Navigation ── */}
-      <nav className="border-b border-slate-800/80 bg-slate-950/95 backdrop-blur sticky top-0 z-50">
-        <div className="max-w-[1800px] mx-auto px-4 h-14 flex items-center justify-between gap-4">
-          <div className="flex items-center space-x-2.5 shrink-0">
-            <div className="w-7 h-7 rounded bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center">
-              <Activity className="w-4 h-4 text-slate-950" />
-            </div>
-            <span className="text-lg font-bold text-white tracking-tight">
-              AlphaStructure<span className="text-emerald-400">.io</span>
-            </span>
+    <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', overflowX: 'hidden' }}>
+      
+      {/* ─── NAV BAR ─── */}
+      <nav style={{ height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.05)', position: 'sticky', top: 0, zIndex: 50 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(56,189,248,0.2)' }}>
+            <Activity style={{ width: 18, height: 18, color: '#020617' }} />
           </div>
+          <span style={{ fontSize: 18, fontWeight: 800, color: '#fff', letterSpacing: '-0.03em' }}>
+            AlphaStructure<span style={{ color: '#38bdf8' }}>.io</span>
+          </span>
+        </div>
 
-          {/* Symbol tabs */}
-          <div className="flex space-x-1 bg-slate-900 p-1 rounded-lg border border-slate-800 overflow-x-auto">
-            {syms.map(sym => (
-              <button key={sym} onClick={() => setSelectedSymbol(sym)}
-                className={`px-3 py-1 rounded font-bold text-[11px] whitespace-nowrap transition-all
-                  ${selectedSymbol === sym ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}>
-                {sym}
-              </button>
-            ))}
-          </div>
+        <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, border: '1px solid rgba(255,255,255,0.05)' }}>
+          {syms.map(s => (
+            <button key={s} onClick={() => setSym(s)} style={{
+              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: 'none', transition: 'all 0.2s',
+              background: sym === s ? 'rgba(56,189,248,0.15)' : 'transparent',
+              color: sym === s ? '#38bdf8' : '#64748b',
+            }}>
+              {s}
+            </button>
+          ))}
+        </div>
 
-          <div className={`flex items-center px-3 py-1 rounded-full border text-[11px] font-medium shrink-0
-            ${isConnected
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-              : 'bg-amber-500/10  border-amber-500/30  text-amber-400'}`}>
-            <Server className="w-3 h-3 mr-1.5" />
-            {isConnected ? 'Cloud DB Connected' : 'Simulated Preview'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* MOCK STRIPE TOGGLE */}
+          <button onClick={() => setIsSubscribed(!isSubscribed)} style={{ background: isSubscribed ? 'rgba(16,185,129,0.1)' : 'rgba(99,91,255,0.1)', color: isSubscribed ? '#10b981' : '#818cf8', border: `1px solid ${isSubscribed ? 'rgba(16,185,129,0.2)' : 'rgba(99,91,255,0.2)'}`, padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+            {isSubscribed ? '✅ PRO ACTIVE' : '🔥 UPGRADE TO PRO'}
+          </button>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.03)', padding: '6px 16px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.05)' }}>
+            <User style={{ width: 14, height: 14, color: '#94a3b8' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{user?.email || 'Guest'}</span>
           </div>
+          <button onClick={() => signOut(auth)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+            <LogOut style={{ width: 14, height: 14 }} /> Logout
+          </button>
         </div>
       </nav>
 
-      <main className="max-w-[1800px] mx-auto px-4 pt-5 space-y-5">
+      {/* ─── MAIN BENTO GRID ─── */}
+      <div style={{ maxWidth: 1600, margin: '0 auto', padding: '24px', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
+        
+        {/* LEFT COLUMN */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {/* Chart Card (Always Unlocked for Trial) */}
+          <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h1 style={{ fontSize: 28, fontWeight: 900, color: '#fff', margin: '0 0 8px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {sym} <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: 6 }}>M15 MAP</span>
+                </h1>
+                <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
+                  <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>HTF BIAS</span> <span style={{ color: biasCl, fontWeight: 800 }}>{data.htf_bias}</span></div>
+                  <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>STRUCTURE</span> <span style={{ color: '#cbd5e1', fontWeight: 800 }}>{data.m15_structure}</span></div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 4 }}>LIVE PRICE</div>
+                <div style={{ fontSize: 28, fontFamily: 'monospace', fontWeight: 800, color: '#38bdf8' }}>{priceStr}</div>
+              </div>
+            </div>
 
-        {/* ── Header ── */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end pb-3 border-b border-slate-800/80">
-          <div>
-            <h1 className="text-3xl font-black text-white tracking-tight mb-1.5">{selectedSymbol}</h1>
-            <div className="flex flex-wrap gap-5 text-xs">
-              {[
-                { k: 'HTF Bias',      v: data.htf_bias,      c: data.htf_bias === 'BULLISH' ? 'text-emerald-400' : data.htf_bias === 'BEARISH' ? 'text-rose-400' : 'text-slate-400' },
-                { k: 'M15 Structure', v: data.m15_structure, c: 'text-slate-300' },
-                { k: 'Dominant Dir',  v: data.dominant_dir,  c: data.dominant_dir === 'UP' ? 'text-emerald-400' : 'text-rose-400' },
-              ].map(({ k, v, c }) => (
-                <div key={k} className="flex items-center gap-1.5">
-                  <span className="text-slate-600 uppercase font-bold tracking-wider">{k}:</span>
-                  <span className={`font-black ${c}`}>{v}</span>
+            <div style={{ height: 500, width: '100%', position: 'relative' }}>
+              <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 10, fontSize: 11, color: '#64748b', background: 'rgba(15,23,42,0.8)', padding: '4px 8px', borderRadius: 6 }}>
+                💡 Scroll to zoom | Drag chart to pan | Drag Y-Axis to stretch | Dbl-Click to reset
+              </div>
+              <StructuralChart data={data} symbol={sym} />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+              {[{l: 'True ATR', v: Number(data.atr).toFixed(5), c: '#f59e0b'}, {l: 'Bull TL', v: data.bull_tl?.valid ? 'Active' : 'Invalid', c: data.bull_tl?.valid ? '#10b981' : '#475569'}, {l: 'Bear TL', v: data.bear_tl?.valid ? 'Active' : 'Invalid', c: data.bear_tl?.valid ? '#f43f5e' : '#475569'}].map((s, i) => (
+                <div key={i} style={{ padding: '16px 24px', borderRight: i < 2 ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
+                  <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 4 }}>{s.l}</div>
+                  <div style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 700, color: s.c }}>{s.v}</div>
                 </div>
               ))}
             </div>
           </div>
-          <div className="text-right mt-3 sm:mt-0">
-            <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-0.5">Live Price</div>
-            <div className="text-3xl font-mono font-black text-white">
-              {data.price > 999 ? data.price.toFixed(2) : data.price.toFixed(5)}
-            </div>
-          </div>
-        </div>
 
-        {/* ── Full-width D3 structural chart ── */}
-        <StructuralChart data={data} symbol={selectedSymbol} />
-
-        {/* ── Signal card  +  Order flow ── */}
-        <div className="grid lg:grid-cols-3 gap-5">
-
-          {/* Signal card */}
-          <div className={`lg:col-span-2 rounded-2xl border ${sBd} ${sBg} overflow-hidden shadow-xl relative`}>
-            {!isHold && (
-              <div className={`absolute inset-y-0 left-0 w-1 ${isBuy ? 'bg-emerald-400' : 'bg-rose-500'} animate-pulse`} />
-            )}
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-5">
+          {/* Algorithmic Signal Card (PAYWALLED) */}
+          <div style={{ position: 'relative', background: '#0f172a', borderRadius: 20, border: `1px solid ${isSubscribed ? (isHold ? 'rgba(255,255,255,0.05)' : isBuy ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)') : 'rgba(255,255,255,0.05)'}`, boxShadow: isHold || !isSubscribed ? '0 10px 40px rgba(0,0,0,0.2)' : (isBuy ? '0 10px 40px rgba(16,185,129,0.1)' : '0 10px 40px rgba(244,63,94,0.1)'), overflow: 'hidden' }}>
+            {!isSubscribed && paywallOverlay}
+            
+            {(!isHold && isSubscribed) && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: `linear-gradient(90deg, transparent, ${sigClr}, transparent)` }} />}
+            
+            <div style={{ padding: 32 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
                 <div>
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Algorithmic Decision</div>
-                  <div className={`text-5xl font-black ${sCl} flex items-center`}>
-                    {!isHold && <Zap className="w-7 h-7 mr-3" />}
-                    {data.signal.decision}
+                  <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Algorithmic Decision</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {!isHold && <Zap style={{ width: 28, height: 28, color: sigClr }} />}
+                    <span style={{ fontSize: 42, fontWeight: 900, color: sigClr, letterSpacing: '-0.02em', lineHeight: 1 }}>{data.signal.decision}</span>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5">Confluence Score</div>
-                  <div className={`text-4xl font-black ${data.signal.score >= 70 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {data.signal.score}<span className="text-xl text-slate-600"> /100</span>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Confluence Score</div>
+                  <div style={{ fontSize: 42, fontWeight: 900, color: data.signal.score >= 70 ? '#10b981' : '#f59e0b', lineHeight: 1 }}>
+                    {data.signal.score}<span style={{ fontSize: 20, color: '#475569' }}> /100</span>
                   </div>
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-3 mb-4">
-                {[
-                  { l: 'Detected Regime', v: data.signal.regime   },
-                  { l: 'Execution Zone',  v: data.signal.location },
-                ].map(({ l, v }) => (
-                  <div key={l} className="bg-slate-950/60 rounded-xl p-4 border border-slate-800/80">
-                    <div className="text-[9px] text-slate-500 uppercase font-bold tracking-widest mb-1">{l}</div>
-                    <div className="font-mono text-sm text-slate-200">{v}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+                {[{ l: 'Detected Regime', v: data.signal.regime }, { l: 'Execution Zone', v: data.signal.location }].map(({ l, v }) => (
+                  <div key={l} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '16px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                    <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 6 }}>{l}</div>
+                    <div style={{ fontFamily: 'monospace', fontSize: 14, color: '#e2e8f0', fontWeight: 600 }}>{v}</div>
                   </div>
                 ))}
               </div>
 
-              <div className="bg-slate-950/80 rounded-xl p-5 border border-slate-800">
-                <div className="flex items-center mb-2">
-                  <Activity className="w-4 h-4 text-cyan-400 mr-2" />
-                  <span className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest">AI Analyst Thesis</span>
+              <div style={{ background: 'rgba(56,189,248,0.05)', borderRadius: 12, padding: '20px', border: '1px solid rgba(56,189,248,0.1)' }}>
+                <div style={{ fontSize: 11, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Target style={{ width: 14, height: 14 }} /> AI Analyst Thesis
                 </div>
-                <p className="text-slate-300 text-sm leading-relaxed font-mono">{data.signal.thesis}</p>
+                <p style={{ fontFamily: 'monospace', fontSize: 13, color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>{data.signal.thesis}</p>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Order flow */}
-          <div className="bg-slate-900 rounded-2xl border border-slate-800 p-5 shadow-xl">
-            <h3 className="text-[10px] font-bold text-white mb-5 flex items-center uppercase tracking-widest">
-              <Crosshair className="w-4 h-4 mr-2 text-slate-500" />
+        {/* RIGHT COLUMN: ORDER FLOW (PAYWALLED) */}
+        <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', height: 'calc(100vh - 110px)', position: 'sticky', top: 84, overflow: 'hidden' }}>
+          {!isSubscribed && paywallOverlay}
+          
+          <div style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Crosshair style={{ width: 18, height: 18, color: '#38bdf8' }} />
               Live Order Flow
-            </h3>
+            </h2>
+          </div>
 
-            {/* Active positions */}
-            <div className="mb-7">
-              <h4 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3 border-b border-slate-800 pb-2">
-                Active Positions
-              </h4>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Active Positions</div>
               {!data.positions?.length ? (
-                <p className="text-sm text-slate-600 font-mono italic">No active positions on {selectedSymbol}.</p>
+                <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center', color: '#64748b', fontSize: 13, fontStyle: 'italic' }}>
+                  No active trades for {sym}.
+                </div>
               ) : data.positions.map((pos, i) => {
                 const lng = pos.type === 'LONG';
                 return (
-                  <div key={i} className={`p-4 rounded-xl border border-slate-800 border-l-4 mb-3
-                    ${lng ? 'border-l-emerald-500 bg-emerald-500/5' : 'border-l-rose-500 bg-rose-500/5'}`}>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className={`font-black text-sm ${lng ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {pos.type} <span className="opacity-60 text-xs">({pos.volume}L)</span>
-                      </span>
-                      <span className={`font-bold font-mono text-sm ${pos.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {pos.pnl >= 0 ? '+' : ''}{Number(pos.pnl || 0).toFixed(2)}
-                      </span>
+                  <div key={i} style={{ borderRadius: 16, border: `1px solid ${lng ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`, background: lng ? 'rgba(16,185,129,0.05)' : 'rgba(244,63,94,0.05)', padding: 16, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: lng ? '#10b981' : '#f43f5e' }}>{pos.type} <span style={{ fontWeight: 500, fontSize: 12, opacity: 0.6 }}>({pos.volume}L)</span></span>
+                      <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 16, color: pos.pnl >= 0 ? '#10b981' : '#f43f5e' }}>{pos.pnl >= 0 ? '+' : ''}{Number(pos.pnl || 0).toFixed(2)}</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs font-mono text-slate-400 bg-slate-950/50 p-2.5 rounded-lg">
-                      <div>
-                        <span className="block text-[9px] text-slate-500 uppercase mb-0.5">Entry</span>
-                        {pos.open_price}
-                      </div>
-                      <div>
-                        <span className="block text-[9px] text-cyan-600 uppercase mb-0.5">Target</span>
-                        {pos.tp}
-                      </div>
-                      <div className="col-span-2 pt-2 border-t border-slate-800/50">
-                        <span className={pos.sl ? 'text-emerald-400' : 'text-rose-500'}>
-                          {pos.sl ? '🛡 PROTECTED SL: ' : '⚠ OPEN SL  '}{pos.sl || 'None'}
-                        </span>
-                      </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12, fontFamily: 'monospace', background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 8 }}>
+                      <div><span style={{ display: 'block', fontSize: 10, color: '#64748b', textTransform: 'uppercase', marginBottom: 2 }}>Entry</span><span style={{ color: '#cbd5e1' }}>{pos.open_price}</span></div>
+                      <div><span style={{ display: 'block', fontSize: 10, color: '#38bdf8', textTransform: 'uppercase', marginBottom: 2 }}>Target</span><span style={{ color: '#cbd5e1' }}>{pos.tp}</span></div>
+                      <div style={{ gridColumn: '1/-1', paddingTop: 8, marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)' }}><span style={{ color: pos.sl ? '#10b981' : '#f43f5e', fontSize: 12 }}>{pos.sl ? '🛡 SL Locked: ' : '⚠ Open SL  '}{pos.sl || '—'}</span></div>
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Pending limits */}
             <div>
-              <h4 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3 border-b border-slate-800 pb-2">
-                Pending Limits
-              </h4>
+              <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Pending Limits</div>
               {!data.orders?.length ? (
-                <p className="text-sm text-slate-600 font-mono italic">No resting limits.</p>
+                <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center', color: '#64748b', fontSize: 13, fontStyle: 'italic' }}>
+                  No resting limits.
+                </div>
               ) : data.orders.map((ord, i) => {
                 const bl = ord.type?.includes('BUY');
                 return (
-                  <div key={i} className={`p-3.5 rounded-xl border border-slate-800 border-l-4 mb-3
-                    ${bl ? 'border-l-emerald-500/50' : 'border-l-rose-500/50'} bg-slate-950/40`}>
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="font-bold text-sm text-slate-200">⏳ {ord.type}</span>
-                      <span className="text-xs text-slate-400 font-mono bg-slate-800 px-2 py-0.5 rounded">{ord.volume}L</span>
+                  <div key={i} style={{ borderRadius: 16, border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)', padding: 16, marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: bl ? '#10b981' : '#f43f5e' }}>⏳ {ord.type}</span>
+                      <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', padding: '4px 8px', borderRadius: 6 }}>{ord.volume}L</span>
                     </div>
-                    <div className="text-xs font-mono text-slate-400 space-y-1.5">
-                      <div className="flex justify-between">
-                        <span className="text-slate-500">Limit:</span>
-                        <span className="text-white">{ord.open_price}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-rose-400">SL:</span>
-                        <span>{ord.sl}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-emerald-400">TP:</span>
-                        <span>{ord.tp}</span>
-                      </div>
+                    <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#94a3b8' }}>
+                      {[['Limit', '#cbd5e1', ord.open_price], ['SL', '#f43f5e', ord.sl], ['TP', '#10b981', ord.tp]].map(([k, c, v]) => (
+                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><span style={{ color: '#64748b' }}>{k}</span><span style={{ color: c }}>{v}</span></div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -608,7 +655,193 @@ export default function AlphaStructureDashboard() {
             </div>
           </div>
         </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ─── Landing Page (Marketing) ─────────────────────────────────────────────────
+function LandingPage({ onNavigate }) {
+  return (
+    <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <nav style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Activity style={{ width: 18, height: 18, color: '#020617' }} />
+          </div>
+          <span style={{ fontSize: 20, fontWeight: 900, color: '#fff', letterSpacing: '-0.03em' }}>AlphaStructure<span style={{ color: '#38bdf8' }}>.io</span></span>
+        </div>
+        <div style={{ display: 'flex', gap: 16 }}>
+          <button onClick={() => onNavigate('auth', true)} style={{ background: 'transparent', color: '#f8fafc', border: 'none', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Login</button>
+          <button onClick={() => onNavigate('auth', false)} style={{ background: '#38bdf8', color: '#020617', border: 'none', padding: '10px 20px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Start Free Trial</button>
+        </div>
+      </nav>
+
+      <main style={{ padding: '80px 20px', textAlign: 'center', maxWidth: 1000, margin: '0 auto' }}>
+        <div style={{ display: 'inline-block', background: 'rgba(56,189,248,0.1)', color: '#38bdf8', padding: '6px 16px', borderRadius: 999, fontSize: 13, fontWeight: 700, marginBottom: 24, border: '1px solid rgba(56,189,248,0.2)' }}>
+          🚀 Version 4.9 Cloud Engine is Live
+        </div>
+        <h1 style={{ fontSize: 64, fontWeight: 900, lineHeight: 1.1, marginBottom: 24, letterSpacing: '-0.04em' }}>
+          Institutional-Grade <br/>
+          <span style={{ color: '#38bdf8' }}>Market Structure</span> Analysis.
+        </h1>
+        <p style={{ fontSize: 20, color: '#94a3b8', maxWidth: 600, margin: '0 auto 40px auto', lineHeight: 1.6 }}>
+          Stop trading blind. Our Python-backed algorithmic engine maps real-time structural geometry, Volume Spread Analysis (VSA), and automated signals directly to your dashboard.
+        </p>
+        
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginBottom: 80 }}>
+          <button onClick={() => onNavigate('auth', false)} style={{ background: '#f8fafc', color: '#020617', border: 'none', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+            Start 7-Day Free Trial <ArrowRight style={{ width: 18, height: 18 }} />
+          </button>
+          <button onClick={() => onNavigate('auth', true)} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: 'pointer' }}>
+            Client Login
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, textAlign: 'left' }}>
+          <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
+            <BarChart2 style={{ width: 32, height: 32, color: '#38bdf8', marginBottom: 16 }} />
+            <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Dynamic Geometry</h3>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Real-time SciPy peak detection automatically draws and tracks structural trendlines and Fibonacci anchors.</p>
+          </div>
+          <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
+            <Cpu style={{ width: 32, height: 32, color: '#10b981', marginBottom: 16 }} />
+            <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Algorithmic Scoring</h3>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Every market move is scored out of 100 based on structural confluence, price action, and Wyckoff regimes.</p>
+          </div>
+          <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
+            <Shield style={{ width: 32, height: 32, color: '#f59e0b', marginBottom: 16 }} />
+            <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Live Order Flow</h3>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Watch the engine place, manage, and trail limit orders and market executions in real-time.</p>
+          </div>
+        </div>
       </main>
+    </div>
+  );
+}
+
+// ─── Main Router App ──────────────────────────────────────────────────────────
+export default function App() {
+  const [view, setView] = useState('landing'); 
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  useEffect(() => {
+    if (!auth) { setLoading(false); return; }
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+      if (u && view !== 'dashboard') setView('dashboard');
+    });
+    return () => unsub();
+  }, [view]);
+
+  const handleGoogleAuth = async () => {
+    setAuthError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      setView('dashboard');
+    } catch (err) {
+      setAuthError(err.message.replace('Firebase: ', ''));
+    }
+  };
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      if (!isLoginMode) {
+        await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+      setView('dashboard');
+    } catch (err) {
+      setAuthError(err.message.replace('Firebase: ', ''));
+    }
+  };
+
+  const navigateToAuth = (modeIsLogin) => {
+    setIsLoginMode(modeIsLogin);
+    setView('auth');
+  };
+
+  if (loading) return <div style={{ height: '100vh', background: '#020617' }} />;
+
+  if (user && view === 'dashboard') {
+    return <DashboardCore user={user} />;
+  }
+
+  if (view === 'landing') {
+    return <LandingPage onNavigate={navigateToAuth} />;
+  }
+
+  // Auth View
+  return (
+    <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <button onClick={() => setView('landing')} style={{ position: 'absolute', top: 30, left: 30, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+        ← Back to Home
+      </button>
+
+      <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', padding: '40px', borderRadius: 24, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 32 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Activity style={{ width: 24, height: 24, color: '#020617' }} />
+          </div>
+          <span style={{ fontSize: 24, fontWeight: 900, color: '#fff', letterSpacing: '-0.03em' }}>AlphaStructure</span>
+        </div>
+
+        <h2 style={{ color: '#fff', fontSize: 20, fontWeight: 700, textAlign: 'center', marginBottom: 8 }}>
+          {isLoginMode ? 'Client Login' : 'Start Free Trial'}
+        </h2>
+        <p style={{ textAlign: 'center', color: '#64748b', fontSize: 13, marginBottom: 24 }}>
+          {isLoginMode ? 'Enter your credentials to access the terminal.' : 'Create an account to access the live charting matrix.'}
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <button onClick={handleGoogleAuth} type="button" style={{ width: '100%', background: '#fff', color: '#0f172a', padding: '12px', borderRadius: 10, fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, transition: 'background 0.2s' }}>
+            <svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+            Continue with Google
+          </button>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '4px 0' }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+            <span style={{ color: '#64748b', fontSize: 11, fontWeight: 700, letterSpacing: '0.05em' }}>OR</span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          </div>
+
+          <form onSubmit={handleAuth} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label style={{ display: 'block', color: '#64748b', fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email Address</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} placeholder="trader@example.com" />
+            </div>
+            <div>
+              <label style={{ display: 'block', color: '#64748b', fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} placeholder="••••••••" />
+            </div>
+
+            {authError && <div style={{ color: '#f43f5e', fontSize: 13, background: 'rgba(244,63,94,0.1)', padding: '10px', borderRadius: 8, border: '1px solid rgba(244,63,94,0.2)', textAlign: 'center' }}>{authError}</div>}
+
+            <button type="submit" style={{ width: '100%', background: '#38bdf8', color: '#020617', padding: '14px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4 }}>
+              <Lock style={{ width: 18, height: 18 }} /> {isLoginMode ? 'Sign In' : 'Create Account'}
+            </button>
+          </form>
+        </div>
+
+        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: '#64748b' }}>
+          {isLoginMode ? 'Need an account?' : 'Already have an account?'}
+          <button onClick={() => setIsLoginMode(!isLoginMode)} style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 700, cursor: 'pointer', padding: '0 0 0 6px' }}>
+            {isLoginMode ? 'Register' : 'Sign In'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
