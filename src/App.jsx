@@ -2,14 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2 } from 'lucide-react';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(false); // Safe default for SSR/Build
+  const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
-    handleResize(); // Set correct value after mount on the client
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -17,7 +17,6 @@ const useIsMobile = () => {
 };
 
 // ─── Firebase Setup ───────────────────────────────────────────────────────────
-// Using environment variables if provided, otherwise falling back to defaults.
 const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
 const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
@@ -364,7 +363,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
 
     let lastTap = 0;
 
-    // --- MOUSE EVENTS ---
     const onMouseDown = (e) => { 
       const rect = cv.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
@@ -424,7 +422,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
       else { yStretchRef.current = 1.0; yOffsetRef.current = 0.0; panRef.current = 0; requestAnimationFrame(draw); }
     };
 
-    // --- TOUCH EVENTS ---
     const onTouchStart = (e) => {
       if (e.touches.length === 2) {
         if (e.cancelable) e.preventDefault();
@@ -549,14 +546,20 @@ function DashboardCore({ user }) {
   
   // Dynamic Plans & Admin State
   const [plans, setPlans] = useState(DEFAULT_PLANS);
-  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans'
+  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe'
   const [editablePlans, setEditablePlans] = useState([]);
-  const [saveStatus, setSaveStatus] = useState('');
+  const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
+  const [notification, setNotification] = useState({ show: false, msg: '', type: 'info' });
 
   // Stripe Simulation State
   const [checkoutPlan, setCheckoutPlan] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+
+  const showNotification = (msg, type = 'info') => {
+    setNotification({ show: true, msg, type });
+    setTimeout(() => setNotification({ show: false, msg: '', type: 'info' }), 4000);
+  };
 
   // Sync Profile & Market Data
   useEffect(() => {
@@ -566,12 +569,12 @@ function DashboardCore({ user }) {
     const fallbackProfile = {
       uid: user.uid,
       role: 'customer',
+      status: 'active',
       email: user.email || `user_${user.uid.substring(0, 5)}@example.com`,
       subscription: { plan: 'free', status: 'active', since: new Date().toISOString() },
       createdAt: new Date().toISOString()
     };
     
-    // App renders even if Firestore never responds
     setProfile(prev => prev || fallbackProfile);
     
     // 1. Fetch User Profile
@@ -580,7 +583,7 @@ function DashboardCore({ user }) {
       if (docSnap.exists()) {
         setProfile(docSnap.data());
       } else {
-        setDoc(profileRef, fallbackProfile).catch(err => console.warn("Profile creation blocked by rules:", err.code));
+        setDoc(profileRef, fallbackProfile).catch(err => console.warn("Profile creation blocked:", err.code));
         setProfile(fallbackProfile);
       }
     }, (error) => {
@@ -598,9 +601,7 @@ function DashboardCore({ user }) {
         setPlans(DEFAULT_PLANS);
         setEditablePlans(DEFAULT_PLANS);
       }
-    }, (error) => {
-      console.warn("Config read blocked:", error.code);
-    });
+    }, (error) => console.warn("Config read blocked:", error.code));
 
     // 3. Fetch Market Data (From Python Engine)
     const unsubMarket = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'market_data'), snap => {
@@ -613,22 +614,23 @@ function DashboardCore({ user }) {
              nd[document.id] = { ...(SIM[document.id] || {}), ...d, candles: d.candles?.length > 0 ? d.candles : (SIM[document.id]?.candles || []) };
         }
       });
-      
       if (hasData && Object.keys(nd).length > 0) { 
-          setMarketData(nd); 
-          setConnected(true); 
-          setSym(currentSym => nd[currentSym] ? currentSym : Object.keys(nd)[0]);
+          setMarketData(nd); setConnected(true); setSym(currentSym => nd[currentSym] ? currentSym : Object.keys(nd)[0]);
       } else {
-          setMarketData(SIM);
-          setConnected(false);
+          setMarketData(SIM); setConnected(false);
       }
     }, err => {
         console.warn("Market data read blocked:", err.code);
-        setMarketData(SIM);
-        setConnected(false);
+        setMarketData(SIM); setConnected(false);
     });
+
+    // 4. Fetch Admin Stripe Keys if applicable
+    const stripeRef = doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'stripe');
+    const unsubStripe = onSnapshot(stripeRef, (docSnap) => {
+       if (docSnap.exists()) setStripeKeys(docSnap.data());
+    }, (error) => console.warn("Stripe read blocked (Expected for non-admins):", error.code));
     
-    return () => { unsubProfile(); unsubMarket(); unsubConfig(); };
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); };
   }, [user]);
 
   // Separate effect to handle admin user list securely
@@ -653,16 +655,12 @@ function DashboardCore({ user }) {
     if (!db || profile?.role !== 'admin') return;
     const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', uid);
     try {
-      if (field === 'role') {
-        await updateDoc(userRef, { role: value });
-      } else if (field === 'plan') {
-        await updateDoc(userRef, {
-          'subscription.plan': value,
-          'subscription.since': new Date().toISOString()
-        });
-      }
+      if (field === 'role') await updateDoc(userRef, { role: value });
+      else if (field === 'status') await updateDoc(userRef, { status: value });
+      else if (field === 'plan') await updateDoc(userRef, { 'subscription.plan': value, 'subscription.since': new Date().toISOString() });
+      showNotification(`User updated successfully`, 'success');
     } catch (err) {
-      console.error("Failed to update user", err);
+      showNotification(`Update Failed: Check your Firebase security rules.`, 'error');
     }
   };
 
@@ -672,14 +670,16 @@ function DashboardCore({ user }) {
     const mockUser = {
       uid: `mock_${randomId}`,
       role: 'customer',
+      status: 'active',
       email: `trader_${randomId}@example.com`,
       subscription: { plan: 'free', status: 'active', since: new Date().toISOString() },
       createdAt: new Date().toISOString()
     };
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', mockUser.uid), mockUser);
+      showNotification('Mock user generated successfully!', 'success');
     } catch (err) {
-      console.error("Failed to create mock user", err);
+      showNotification(`Failed: Update your Firebase rules to allow writes to 'artifacts/'.`, 'error');
     }
   };
 
@@ -687,8 +687,9 @@ function DashboardCore({ user }) {
     if (!db || profile?.role !== 'admin') return;
     try {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', uid));
+      showNotification('User deleted successfully.', 'success');
     } catch (err) {
-      console.error("Failed to delete user", err);
+      showNotification(`Delete Failed: Check Firebase security rules.`, 'error');
     }
   };
 
@@ -700,14 +701,21 @@ function DashboardCore({ user }) {
 
   const handleSavePlans = async () => {
     if (!db || profile?.role !== 'admin') return;
-    setSaveStatus('Saving...');
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans'), { plans: editablePlans });
-      setSaveStatus('Saved successfully!');
-      setTimeout(() => setSaveStatus(''), 2000);
+      showNotification('Subscription Plans saved successfully!', 'success');
     } catch (err) {
-      setSaveStatus('Error saving plans');
-      console.error(err);
+      showNotification(`Save Failed: Check Firebase rules.`, 'error');
+    }
+  };
+
+  const handleSaveStripe = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'stripe'), stripeKeys);
+      showNotification('Stripe configuration saved securely!', 'success');
+    } catch (err) {
+      showNotification(`Stripe Save Failed: Check Firebase rules.`, 'error');
     }
   };
 
@@ -722,11 +730,7 @@ function DashboardCore({ user }) {
         const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
         setDoc(profileRef, {
           ...profile,
-          subscription: {
-            plan: checkoutPlan.id,
-            status: 'active',
-            since: new Date().toISOString()
-          }
+          subscription: { plan: checkoutPlan.id, status: 'active', since: new Date().toISOString() }
         }, { merge: true }).catch(e => console.error("Error upgrading plan", e));
       }
 
@@ -741,17 +745,25 @@ function DashboardCore({ user }) {
   const toggleDevAdminRole = () => {
     if (user && profile && db) {
       const newRole = profile.role === 'admin' ? 'customer' : 'admin';
-      
-      // Optimistic UI Update so the button responds instantly
       setProfile({ ...profile, role: newRole });
-      
       const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
-      setDoc(profileRef, {
-        ...profile,
-        role: newRole
-      }, { merge: true }).catch(e => console.error("Error toggling dev admin", e));
+      setDoc(profileRef, { ...profile, role: newRole }, { merge: true }).catch(e => console.error(e));
     }
   };
+
+  // Suspension Screen Intercept
+  if (profile?.status === 'suspended') {
+    return (
+      <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, sans-serif' }}>
+        <div style={{ textAlign: 'center', background: '#0f172a', padding: 48, borderRadius: 24, border: '1px solid rgba(244,63,94,0.3)', maxWidth: 400 }}>
+          <Ban style={{ width: 64, height: 64, color: '#f43f5e', margin: '0 auto 24px auto' }} />
+          <h1 style={{ color: '#fff', fontSize: 24, fontWeight: 800, marginBottom: 12 }}>Account Suspended</h1>
+          <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6, marginBottom: 32 }}>Your access to the AlphaStructure terminal has been revoked. Please contact the administrator for assistance.</p>
+          <button onClick={() => signOut(auth)} style={{ background: '#f43f5e', color: '#fff', border: 'none', padding: '12px 24px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Logout</button>
+        </div>
+      </div>
+    );
+  }
 
   // Safe data extraction to prevent loading screen freeze
   const safeMarketData = marketData || SIM;
@@ -767,8 +779,6 @@ function DashboardCore({ user }) {
 
   const syms = Object.keys(safeMarketData);
   const isAdmin = profile.role === 'admin';
-  
-  // CHANGED: Admin bypasses the paywall automatically.
   const hasProAccess = profile.subscription?.plan !== 'free' || isAdmin;
 
   const isHold  = data.signal.decision === 'HOLD';
@@ -793,6 +803,14 @@ function DashboardCore({ user }) {
   return (
     <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', overflowX: 'hidden' }}>
       
+      {/* ─── TOAST NOTIFICATION SYSTEM ─── */}
+      {notification.show && (
+        <div style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 9999, background: notification.type === 'success' ? 'rgba(16,185,129,0.9)' : 'rgba(244,63,94,0.9)', backdropFilter: 'blur(8px)', color: '#fff', padding: '16px 24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', border: `1px solid ${notification.type === 'success' ? '#34d399' : '#fda4af'}`, animation: 'slideUp 0.3s ease-out' }}>
+          {notification.type === 'success' ? <CheckCircle style={{ width: 20, height: 20 }} /> : <XCircle style={{ width: 20, height: 20 }} />}
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{notification.msg}</span>
+        </div>
+      )}
+
       {/* ─── NAV BAR ─── */}
       <nav style={{ 
         minHeight: 60, display: 'flex', flexDirection: isMobile ? 'column' : 'row', 
@@ -999,7 +1017,6 @@ function DashboardCore({ user }) {
       {dashView === 'billing' && (
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
           
-          {/* Admin Banner */}
           {isAdmin && (
             <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#10b981' }}>
               <Shield style={{ width: 24, height: 24 }} />
@@ -1068,9 +1085,10 @@ function DashboardCore({ user }) {
             <h1 style={{ fontSize: 24, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 12 }}>
               <Shield style={{ width: 28, height: 28, color: '#6366f1' }} /> Admin Dashboard
             </h1>
-            <div style={{ display: 'flex', gap: 8, background: '#0f172a', padding: 4, borderRadius: 12, border: '1px solid #1e293b' }}>
-              <button onClick={() => setAdminTab('users')} style={{ background: adminTab === 'users' ? '#1e293b' : 'transparent', color: adminTab === 'users' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>Users</button>
-              <button onClick={() => setAdminTab('plans')} style={{ background: adminTab === 'plans' ? '#1e293b' : 'transparent', color: adminTab === 'plans' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>Subscription Tiers</button>
+            <div style={{ display: 'flex', gap: 8, background: '#0f172a', padding: 4, borderRadius: 12, border: '1px solid #1e293b', overflowX: 'auto' }}>
+              <button onClick={() => setAdminTab('users')} style={{ background: adminTab === 'users' ? '#1e293b' : 'transparent', color: adminTab === 'users' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Users</button>
+              <button onClick={() => setAdminTab('plans')} style={{ background: adminTab === 'plans' ? '#1e293b' : 'transparent', color: adminTab === 'plans' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Subscription Tiers</button>
+              <button onClick={() => setAdminTab('stripe')} style={{ background: adminTab === 'stripe' ? '#1e293b' : 'transparent', color: adminTab === 'stripe' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Stripe Settings</button>
             </div>
           </div>
 
@@ -1087,67 +1105,72 @@ function DashboardCore({ user }) {
                     <thead style={{ background: '#020617', borderBottom: '1px solid #1e293b' }}>
                       <tr>
                         <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>User / ID</th>
-                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Role</th>
+                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Role & Status</th>
                         <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Plan</th>
                         <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Joined</th>
                         <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {allUsers.map(u => (
-                        <tr key={u.id} style={{ borderBottom: '1px solid #1e293b', background: u.role === 'admin' ? 'rgba(99,102,241,0.02)' : 'transparent' }}>
-                          <td style={{ padding: '16px 24px' }}>
-                            <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{u.email}</div>
-                            <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b', marginTop: 4 }}>{u.uid}</div>
-                          </td>
-                          <td style={{ padding: '16px 24px' }}>
-                            <select 
-                              value={u.role || 'customer'} 
-                              onChange={(e) => handleAdminUpdate(u.id, 'role', e.target.value)}
-                              disabled={u.id === user.uid}
-                              style={{ 
-                                background: u.role === 'admin' ? 'rgba(99,102,241,0.1)' : '#1e293b', 
-                                color: u.role === 'admin' ? '#818cf8' : '#94a3b8', 
-                                border: `1px solid ${u.role === 'admin' ? 'rgba(99,102,241,0.2)' : '#334155'}`, 
-                                borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: u.id === user.uid ? 'not-allowed' : 'pointer',
-                                appearance: 'none', WebkitAppearance: 'none'
-                              }}
-                            >
-                              <option value="customer" style={{ background: '#0f172a', color: '#fff' }}>Customer</option>
-                              <option value="admin" style={{ background: '#0f172a', color: '#fff' }}>Admin</option>
-                            </select>
-                          </td>
-                          <td style={{ padding: '16px 24px' }}>
-                            <select 
-                              value={u.subscription?.plan || 'free'} 
-                              onChange={(e) => handleAdminUpdate(u.id, 'plan', e.target.value)}
-                              style={{ 
-                                background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', 
-                                borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: 'pointer',
-                                appearance: 'none', WebkitAppearance: 'none'
-                              }}
-                            >
-                              {plans.map(p => (
-                                <option key={p.id} value={p.id} style={{ background: '#0f172a', color: '#fff' }}>{p.name} (${p.price})</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td style={{ padding: '16px 24px', fontSize: 13, color: '#94a3b8' }}>
-                            {new Date(u.createdAt).toLocaleDateString()}
-                          </td>
-                          <td style={{ padding: '16px 24px', textAlign: 'right' }}>
-                            {u.id !== user.uid && (
-                              <button 
-                                onClick={() => handleDeleteUser(u.id)}
-                                style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
-                                title="Delete User"
+                      {allUsers.map(u => {
+                        const isSuspended = u.status === 'suspended';
+                        return (
+                          <tr key={u.id} style={{ borderBottom: '1px solid #1e293b', background: u.role === 'admin' ? 'rgba(99,102,241,0.02)' : isSuspended ? 'rgba(244,63,94,0.02)' : 'transparent' }}>
+                            <td style={{ padding: '16px 24px' }}>
+                              <div style={{ fontWeight: 600, color: isSuspended ? '#64748b' : '#e2e8f0', textDecoration: isSuspended ? 'line-through' : 'none' }}>{u.email}</div>
+                              <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b', marginTop: 4 }}>{u.uid}</div>
+                            </td>
+                            <td style={{ padding: '16px 24px' }}>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <select 
+                                  value={u.role || 'customer'} 
+                                  onChange={(e) => handleAdminUpdate(u.id, 'role', e.target.value)}
+                                  disabled={u.id === user.uid}
+                                  style={{ 
+                                    background: u.role === 'admin' ? 'rgba(99,102,241,0.1)' : '#1e293b', color: u.role === 'admin' ? '#818cf8' : '#94a3b8', border: `1px solid ${u.role === 'admin' ? 'rgba(99,102,241,0.2)' : '#334155'}`, borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: u.id === user.uid ? 'not-allowed' : 'pointer', appearance: 'none'
+                                  }}
+                                >
+                                  <option value="customer" style={{ background: '#0f172a', color: '#fff' }}>Customer</option>
+                                  <option value="admin" style={{ background: '#0f172a', color: '#fff' }}>Admin</option>
+                                </select>
+                                {isSuspended && (
+                                  <span style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Suspended</span>
+                                )}
+                              </div>
+                            </td>
+                            <td style={{ padding: '16px 24px' }}>
+                              <select 
+                                value={u.subscription?.plan || 'free'} 
+                                onChange={(e) => handleAdminUpdate(u.id, 'plan', e.target.value)}
+                                style={{ background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: 'pointer', appearance: 'none' }}
                               >
-                                <Trash2 style={{ width: 14, height: 14 }} />
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                                {plans.map(p => <option key={p.id} value={p.id} style={{ background: '#0f172a', color: '#fff' }}>{p.name} (${p.price})</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: '16px 24px', fontSize: 13, color: '#94a3b8' }}>{new Date(u.createdAt).toLocaleDateString()}</td>
+                            <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                              {u.id !== user.uid && (
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                                  <button 
+                                    onClick={() => handleAdminUpdate(u.id, 'status', isSuspended ? 'active' : 'suspended')}
+                                    style={{ background: isSuspended ? 'rgba(16,185,129,0.1)' : 'rgba(244,163,63,0.1)', color: isSuspended ? '#10b981' : '#f59e0b', border: `1px solid ${isSuspended ? 'rgba(16,185,129,0.2)' : 'rgba(244,163,63,0.2)'}`, padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title={isSuspended ? "Reactivate User" : "Suspend User"}
+                                  >
+                                    {isSuspended ? <Unlock style={{ width: 14, height: 14 }} /> : <Ban style={{ width: 14, height: 14 }} />}
+                                  </button>
+                                  <button 
+                                    onClick={() => handleDeleteUser(u.id)}
+                                    style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Delete User"
+                                  >
+                                    <Trash2 style={{ width: 14, height: 14 }} />
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1157,8 +1180,7 @@ function DashboardCore({ user }) {
 
           {adminTab === 'plans' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
-                {saveStatus && <span style={{ fontSize: 13, color: '#10b981', fontWeight: 600 }}>{saveStatus}</span>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button onClick={handleSavePlans} style={{ background: '#38bdf8', color: '#020617', padding: '10px 24px', borderRadius: 8, fontSize: 14, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Shield style={{ width: 16, height: 16 }} /> Save Active Plans
                 </button>
@@ -1193,6 +1215,49 @@ function DashboardCore({ user }) {
               </div>
             </div>
           )}
+
+          {adminTab === 'stripe' && (
+            <div style={{ maxWidth: 800 }}>
+              <div style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#38bdf8' }}>
+                <Key style={{ width: 24, height: 24, flexShrink: 0 }} />
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 4px 0' }}>Secure Local Setup</h3>
+                  <p style={{ margin: 0, fontSize: 13, color: '#bae6fd', lineHeight: 1.5 }}>Because this is a serverless frontend deployment, your Stripe Secret Keys are stored strictly within your personal Admin profile in Firebase to prevent exposure.</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid #1e293b' }}>
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Stripe Environment</label>
+                  <div style={{ display: 'flex', gap: 12 }}>
+                    <button onClick={() => setStripeKeys({...stripeKeys, mode: 'test'})} style={{ flex: 1, padding: '12px', background: stripeKeys.mode === 'test' ? '#1e293b' : '#020617', color: stripeKeys.mode === 'test' ? '#fff' : '#64748b', border: `1px solid ${stripeKeys.mode === 'test' ? '#334155' : '#1e293b'}`, borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Test Mode</button>
+                    <button onClick={() => setStripeKeys({...stripeKeys, mode: 'live'})} style={{ flex: 1, padding: '12px', background: stripeKeys.mode === 'live' ? 'rgba(16,185,129,0.1)' : '#020617', color: stripeKeys.mode === 'live' ? '#10b981' : '#64748b', border: `1px solid ${stripeKeys.mode === 'live' ? 'rgba(16,185,129,0.2)' : '#1e293b'}`, borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Live Mode</button>
+                  </div>
+                </div>
+
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Publishable Key</label>
+                  <input value={stripeKeys.pubKey} onChange={e => setStripeKeys({...stripeKeys, pubKey: e.target.value})} placeholder="pk_test_..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+                
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Secret Key</label>
+                  <input type="password" value={stripeKeys.secretKey} onChange={e => setStripeKeys({...stripeKeys, secretKey: e.target.value})} placeholder="sk_test_..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+
+                <div style={{ marginBottom: 32 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Webhook Secret</label>
+                  <input type="password" value={stripeKeys.webhook} onChange={e => setStripeKeys({...stripeKeys, webhook: e.target.value})} placeholder="whsec_..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={handleSaveStripe} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Save style={{ width: 18, height: 18 }} /> Save Stripe Configuration
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1201,7 +1266,6 @@ function DashboardCore({ user }) {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', borderRadius: 24, border: '1px solid #1e293b', overflow: 'hidden', boxShadow: '0 25px 50px rgba(0,0,0,0.5)' }}>
             
-            {/* Header */}
             <div style={{ padding: '20px 24px', borderBottom: '1px solid #1e293b', background: '#020617', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f8fafc', fontWeight: 700 }}>
                 <CreditCard style={{ width: 18, height: 18, color: '#38bdf8' }} /> Secure Checkout
@@ -1338,7 +1402,6 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    // 1. Initialize Firebase Auth Flow safely inside useEffect
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -1457,14 +1520,3 @@ export default function App() {
             </button>
           </form>
         </div>
-
-        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: '#64748b' }}>
-          {isLoginMode ? 'Need an account?' : 'Already have an account?'}
-          <button onClick={() => setIsLoginMode(!isLoginMode)} style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 700, cursor: 'pointer', padding: '0 0 0 6px' }}>
-            {isLoginMode ? 'Register' : 'Sign In'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
