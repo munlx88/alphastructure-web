@@ -6,9 +6,10 @@ import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarCh
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 1024);
+  const [isMobile, setIsMobile] = useState(false); // Safe default for SSR/Build
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
+    handleResize(); // Set correct value after mount on the client
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
