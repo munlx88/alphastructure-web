@@ -1520,3 +1520,14 @@ export default function App() {
             </button>
           </form>
         </div>
+
+        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: '#64748b' }}>
+          {isLoginMode ? 'Need an account?' : 'Already have an account?'}
+          <button onClick={() => setIsLoginMode(!isLoginMode)} style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 700, cursor: 'pointer', padding: '0 0 0 6px' }}>
+            {isLoginMode ? 'Register' : 'Sign In'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
