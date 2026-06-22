@@ -101,10 +101,47 @@ const SIM = Object.fromEntries(Object.keys(SCFG).map(s => [s, buildSim(s)]));
 // ─── Subscriptions & Plans ───────────────────────────────────────────────────
 // Added stripePriceId for Production Integration
 const DEFAULT_PLANS = [
-  { id: 'free', name: '7-Day Free Trial', price: 0, interval: '7 Days', stripePriceId: '', features: ['Access to daily bias', 'End of day reports', 'Community access'], color: '#334155' },
-  { id: 'monthly', name: 'Alpha Pro (Monthly)', price: 20, interval: 'Month', stripePriceId: 'price_abc123', features: ['Live Engine Telemetry', 'M15/H1 Execution Signals', 'Advanced Trade Management', 'Discord VIP'], color: '#38bdf8' },
-  { id: 'quarterly', name: 'Alpha Pro (Quarterly)', price: 51, interval: '3 Months', stripePriceId: 'price_xyz789', discount: '15% OFF', features: ['All Monthly Features', 'Unrestricted Desktop .exe', 'Auto-Trade Execution', '1-on-1 Support'], color: '#10b981' }
+  { id: 'web_pro', name: 'Alpha Web Pro (Monthly)', price: 20, interval: 'Month', stripePriceId: '', features: ['Live Engine Telemetry', 'M15/H1 Execution Signals', 'Advanced Trade Management', 'Discord VIP'], color: '#38bdf8' },
+  { id: 'desk_pro', name: 'Alpha Desk Premium (Monthly)', price: 51, interval: 'Month', stripePriceId: '', features: ['All Web Features', 'Unrestricted Desktop .exe', 'Auto-Trade Execution', '1-on-1 Support'], color: '#10b981' },
+  { id: 'lifetime', name: 'Desk License (Lifetime)', price: 499, interval: 'Once', stripePriceId: '', features: ['Permanent .exe Access', 'No Monthly Fees', 'All Future Updates', 'Priority Support'], color: '#f59e0b', discount: 'BEST VALUE' }
 ];
+
+// ─── Reusable Components ──────────────────────────────────────────────────────
+const InfoModal = ({ type, onClose }) => {
+  if (!type) return null;
+  let title = '', content = null;
+  if (type === 'about') {
+    title = 'About AlphaStructure';
+    content = <p style={{color: '#94a3b8', lineHeight: 1.6}}>AlphaStructure is a quantitative research and trading technology firm. We specialize in institutional-grade market structure analysis, combining Python-based algorithmic engines with real-time web telemetry to give retail traders a professional edge.</p>;
+  } else if (type === 'contact') {
+    title = 'Contact Us';
+    content = <p style={{color: '#94a3b8', lineHeight: 1.6}}>For premium support, license inquiries, or technical assistance, please email us at <strong>support@alphastructure.io</strong> or reach out via our private Discord server available to Pro members.</p>;
+  } else if (type === 'disclaimer') {
+    title = 'Risk Disclaimer';
+    content = <p style={{color: '#94a3b8', lineHeight: 1.6}}>Trading foreign exchange, indices, and commodities carries a high level of risk and may not be suitable for all investors. Past performance is not indicative of future results. The AlphaStructure engine provides algorithmic analysis and execution tools, but does not constitute financial advice. You are solely responsible for your own trading decisions.</p>;
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.85)', backdropFilter: 'blur(8px)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ background: '#0f172a', padding: '32px', borderRadius: 24, border: '1px solid rgba(255,255,255,0.05)', maxWidth: 500, width: '100%', position: 'relative', boxShadow: '0 25px 50px rgba(0,0,0,0.5)' }}>
+        <button onClick={onClose} style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer' }}><XCircle size={24} /></button>
+        <h2 style={{ fontSize: 24, fontWeight: 800, color: '#fff', margin: '0 0 16px 0' }}>{title}</h2>
+        {content}
+      </div>
+    </div>
+  );
+};
+
+const SharedFooter = ({ onOpenInfo }) => (
+  <footer style={{ padding: '32px 24px', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.05)', marginTop: 'auto', background: 'transparent' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 24, marginBottom: 16 }}>
+      <button onClick={() => onOpenInfo('about')} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'color 0.2s' }}>About Us</button>
+      <button onClick={() => onOpenInfo('contact')} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'color 0.2s' }}>Contact Us</button>
+      <button onClick={() => onOpenInfo('disclaimer')} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'color 0.2s' }}>Risk Disclaimer</button>
+    </div>
+    <div style={{ color: '#475569', fontSize: 12 }}>© {new Date().getFullYear()} AlphaStructure.io. All rights reserved.</div>
+  </footer>
+);
 
 // ─── Interactive Pure HTML5 Canvas Chart ──────────────────────────────────────
 const StructuralChart = ({ data, symbol, isMobile }) => {
@@ -534,7 +571,7 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
 };
 
 // ─── Dashboard Core (Protected & Tiered) ──────────────────────────────────────
-function DashboardCore({ user }) {
+function DashboardCore({ user, onOpenInfo }) {
   const isMobile = useIsMobile();
   const [marketData,  setMarketData]  = useState(SIM);
   const [connected,   setConnected]   = useState(false);
@@ -760,28 +797,19 @@ function DashboardCore({ user }) {
             }
             if (data?.url) {
                 // Backend successfully generated checkout, redirect user to Stripe
-                window.location.assign(data.url);
-                unsub();
-            }
-        });
-    } catch (err) {
-        console.error(err);
-        setIsProcessing(false);
-        showNotification('Checkout failed to initialize. Are your rules set?', 'error');
-    }
-  };
+        window.location.assign(data.url);
+        unsub();
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    setIsProcessing(false);
+    showNotification('Checkout failed to initialize. Are your rules set?', 'error');
+  }
+};
 
-  const toggleDevAdminRole = () => {
-    if (user && profile && db) {
-      const newRole = profile.role === 'admin' ? 'customer' : 'admin';
-      setProfile({ ...profile, role: newRole });
-      const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
-      setDoc(profileRef, { ...profile, role: newRole }, { merge: true }).catch(e => console.error(e));
-    }
-  };
-
-  // Suspension Screen Intercept
-  if (profile?.status === 'suspended') {
+// Suspension Screen Intercept
+if (profile?.status === 'suspended') {
     return (
       <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, sans-serif' }}>
         <div style={{ textAlign: 'center', background: '#0f172a', padding: 48, borderRadius: 24, border: '1px solid rgba(244,63,94,0.3)', maxWidth: 400 }}>
@@ -859,33 +887,28 @@ function DashboardCore({ user }) {
         </div>
 
         {dashView === 'terminal' && (
-          <div style={{ 
-            display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, 
-            border: '1px solid rgba(255,255,255,0.05)', overflowX: 'auto', whiteSpace: 'nowrap', 
-            maxWidth: '100%', WebkitOverflowScrolling: 'none', msOverflowStyle: 'none' 
-          }}>
-            {syms.map(s => (
-              <button key={s} onClick={() => setSym(s)} style={{
-                padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', 
-                border: 'none', transition: 'all 0.2s', flexShrink: 0,
-                background: sym === s ? 'rgba(56,189,248,0.15)' : 'transparent',
-                color: sym === s ? '#38bdf8' : '#64748b',
-              }}>
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
+        <div style={{ 
+          display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, 
+          border: '1px solid rgba(255,255,255,0.05)', overflowX: 'auto', whiteSpace: 'nowrap', 
+          maxWidth: '100%', WebkitOverflowScrolling: 'none', msOverflowStyle: 'none' 
+        }}>
+          {syms.map(s => (
+            <button key={s} onClick={() => setSym(s)} style={{
+              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', 
+              border: 'none', transition: 'all 0.2s', flexShrink: 0,
+              background: sym === s ? 'rgba(56,189,248,0.15)' : 'transparent',
+              color: sym === s ? '#38bdf8' : '#64748b',
+            }}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'space-between' : 'flex-end', gap: 12 }}>
-          
-          <button onClick={toggleDevAdminRole} style={{ fontSize: 11, padding: '4px 8px', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: 4, cursor: 'pointer' }}>
-            [Dev: Toggle Admin]
-          </button>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setDashView('terminal')} style={{ background: dashView === 'terminal' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'terminal' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Terminal</button>
-            <button onClick={() => setDashView('billing')} style={{ background: dashView === 'billing' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'billing' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Billing</button>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'space-between' : 'flex-end', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => setDashView('terminal')} style={{ background: dashView === 'terminal' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'terminal' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Terminal</button>
+          <button onClick={() => setDashView('billing')} style={{ background: dashView === 'billing' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'billing' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Billing</button>
             {isAdmin && <button onClick={() => setDashView('admin')} style={{ background: dashView === 'admin' ? 'rgba(99,102,241,0.2)' : 'transparent', color: dashView === 'admin' ? '#818cf8' : '#6366f1', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Admin</button>}
           </div>
           
@@ -898,11 +921,19 @@ function DashboardCore({ user }) {
       </nav>
 
       {/* ─── TERMINAL VIEW ─── */}
-      {}
       {dashView === 'terminal' && (
         <div style={{ maxWidth: 1600, margin: '0 auto', padding: isMobile ? '16px' : '24px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', minWidth: 0 }}>
+            
+            {/* ─── ENGINE STATUS ─── */}
+            <div style={{ background: connected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', border: `1px solid ${connected ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`, borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Activity style={{ width: 20, height: 20, color: connected ? '#10b981' : '#f43f5e', flexShrink: 0 }} />
+              <span style={{ color: connected ? '#10b981' : '#f43f5e', fontSize: 13, fontWeight: 800, letterSpacing: '0.05em' }}>
+                {connected ? 'ENGINE ONLINE' : 'ENGINE OFFLINE'}
+              </span>
+            </div>
+
             {/* Chart Card */}
             <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', overflow: 'hidden', display: 'flex', flexDirection: 'column', width: '100%' }}>
               <div style={{ padding: isMobile ? '16px' : '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 12 : 0 }}>
@@ -1064,11 +1095,11 @@ function DashboardCore({ user }) {
             <p style={{ color: '#94a3b8', fontSize: 16, maxWidth: 600, margin: '0 auto' }}>Upgrade your license to unlock the full potential of the AlphaStructure engine directly on your dashboard.</p>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 24 }}>
             {plans.map(plan => {
               const isActive = profile?.subscription?.plan === plan.id;
               return (
-                <div key={plan.id} style={{ position: 'relative', background: '#0f172a', borderRadius: 24, padding: 32, border: `2px solid ${isActive ? plan.color : '#1e293b'}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div key={plan.id} style={{ width: isMobile ? '100%' : '320px', position: 'relative', background: '#0f172a', borderRadius: 24, padding: 32, border: `2px solid ${isActive ? plan.color : '#1e293b'}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                   {isActive && (
                     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: plan.color, color: '#020617', fontSize: 12, fontWeight: 800, padding: '6px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
                       Current Active Plan
@@ -1096,11 +1127,6 @@ function DashboardCore({ user }) {
                     disabled={isActive}
                     onClick={() => {
                         setCheckoutPlan(plan);
-                        if (plan.price === 0) {
-                            // Free trial skips stripe
-                            handleAdminUpdate(user.uid, 'plan', plan.id);
-                            setDashView('terminal');
-                        }
                     }}
                     style={{ 
                       width: '100%', padding: '14px', borderRadius: 12, fontSize: 15, fontWeight: 700, border: 'none', 
@@ -1108,7 +1134,7 @@ function DashboardCore({ user }) {
                       cursor: isActive ? 'not-allowed' : 'pointer', transition: 'all 0.2s'
                     }}
                   >
-                    {isActive ? 'Active' : (plan.price === 0 ? 'Start Trial' : 'Subscribe Now')}
+                    {isActive ? 'Active' : 'Subscribe Now'}
                   </button>
                 </div>
               );
@@ -1356,15 +1382,20 @@ function DashboardCore({ user }) {
         </div>
       )}
 
+      <SharedFooter onOpenInfo={onOpenInfo} />
     </div>
   );
 }
 
 // ─── Landing Page (Marketing) ─────────────────────────────────────────────────
-function LandingPage({ onNavigate }) {
+function LandingPage({ onNavigate, onOpenInfo }) {
   const isMobile = useIsMobile();
   return (
-    <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', display: 'flex', flexDirection: 'column' }}>
+      <style>{`
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.8); } }
+        @keyframes float-card { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+      `}</style>
       <nav style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: isMobile ? 16 : 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1374,7 +1405,7 @@ function LandingPage({ onNavigate }) {
         </div>
         <div style={{ display: 'flex', gap: 16 }}>
           <button onClick={() => onNavigate('auth', true)} style={{ background: 'transparent', color: '#f8fafc', border: 'none', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Login</button>
-          <button onClick={() => onNavigate('auth', false)} style={{ background: '#38bdf8', color: '#020617', border: 'none', padding: '10px 20px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Start Free Trial</button>
+          <button onClick={() => onNavigate('auth', false)} style={{ background: '#38bdf8', color: '#020617', border: 'none', padding: '10px 20px', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>Get Started</button>
         </div>
       </nav>
 
@@ -1390,33 +1421,61 @@ function LandingPage({ onNavigate }) {
           Stop trading blind. Our Python-backed algorithmic engine maps real-time structural geometry, Volume Spread Analysis (VSA), and automated signals directly to your dashboard.
         </p>
         
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 16, justifyContent: 'center', marginBottom: 80 }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 16, justifyContent: 'center', marginBottom: 60 }}>
           <button onClick={() => onNavigate('auth', false)} style={{ background: '#f8fafc', color: '#020617', border: 'none', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            Start 7-Day Free Trial <ArrowRight style={{ width: 18, height: 18 }} />
+            Get Started <ArrowRight style={{ width: 18, height: 18 }} />
           </button>
           <button onClick={() => onNavigate('auth', true)} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', padding: '16px 32px', borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: 'pointer' }}>
             Client Login
           </button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 24, textAlign: 'left' }}>
+        {/* ─── NEW TERMINAL PREVIEW WIDGET ─── */}
+        <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '20px 24px', maxWidth: 600, margin: '0 auto 80px auto', textAlign: 'left', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', position: 'relative', overflow: 'hidden', animation: 'float-card 6s ease-in-out infinite' }}>
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: 'linear-gradient(90deg, #38bdf8, #10b981)' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: 16 }}>
+            <span style={{ fontFamily: 'monospace', color: '#94a3b8', fontSize: 12 }}>Live Terminal Telemetry</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+               <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981', animation: 'pulse-dot 2s infinite' }} />
+               <span style={{ fontFamily: 'monospace', color: '#10b981', fontSize: 12, fontWeight: 700 }}>SYS.ONLINE</span>
+            </div>
+          </div>
+          <div style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0', lineHeight: 1.8 }}>
+             <div style={{ color: '#38bdf8' }}>{`>`} Executing AlphaStructure Engine v4.9...</div>
+             <div style={{ color: '#64748b' }}>{`>`} Syncing live market geometry (GBPUSD)...</div>
+             <div>{`>`} Detected 15M Bearish Order Block at <span style={{ color: '#f8fafc', fontWeight: 800 }}>1.32060</span>.</div>
+             <div>{`>`} Calculating Wyckoff confluence...</div>
+             <div style={{ marginTop: 16, padding: 12, background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', borderRadius: 8, color: '#f43f5e', fontWeight: 800, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+               <Zap style={{width: 18, height: 18}}/> ALGORITHMIC SIGNAL: STRONG SHORT (92/100)
+             </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)', gap: 24, textAlign: 'left' }}>
           <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
             <BarChart2 style={{ width: 32, height: 32, color: '#38bdf8', marginBottom: 16 }} />
             <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Dynamic Geometry</h3>
-            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Real-time SciPy peak detection automatically draws and tracks structural trendlines and Fibonacci anchors.</p>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Real-time SciPy peak detection automatically draws and tracks structural trendlines and anchors.</p>
           </div>
           <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
             <Cpu style={{ width: 32, height: 32, color: '#10b981', marginBottom: 16 }} />
             <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Algorithmic Scoring</h3>
-            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Every market move is scored out of 100 based on structural confluence, price action, and Wyckoff regimes.</p>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Every market move is scored out of 100 based on structural confluence and Wyckoff regimes.</p>
           </div>
           <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)' }}>
             <Shield style={{ width: 32, height: 32, color: '#f59e0b', marginBottom: 16 }} />
             <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>Live Order Flow</h3>
             <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Watch the engine place, manage, and trail limit orders and market executions in real-time.</p>
           </div>
+          <div style={{ background: 'linear-gradient(135deg, rgba(99,102,241,0.1), rgba(16,185,129,0.1))', padding: 32, borderRadius: 20, border: '1px solid rgba(99,102,241,0.2)' }}>
+            <Zap style={{ width: 32, height: 32, color: '#818cf8', marginBottom: 16 }} />
+            <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12, color: '#fff' }}>Windows .exe Client</h3>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6 }}>Connect the engine directly to your MT5 terminal for 100% automated local trade execution.</p>
+          </div>
         </div>
       </main>
+      
+      <SharedFooter onOpenInfo={onOpenInfo} />
     </div>
   );
 }
@@ -1426,6 +1485,7 @@ export default function App() {
   const isMobile = useIsMobile();
   const [view, setView] = useState('landing'); 
   const [isLoginMode, setIsLoginMode] = useState(true);
+  const [infoType, setInfoType] = useState(null);
   
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1495,34 +1555,34 @@ export default function App() {
   if (loading) return <div style={{ height: '100vh', background: '#020617' }} />;
 
   if (user && view === 'dashboard') {
-    return <DashboardCore user={user} />;
+    return (
+      <>
+        <InfoModal type={infoType} onClose={() => setInfoType(null)} />
+        <DashboardCore user={user} onOpenInfo={setInfoType} />
+      </>
+    );
   }
 
   if (view === 'landing') {
-    return <LandingPage onNavigate={navigateToAuth} />;
+    return (
+      <>
+        <InfoModal type={infoType} onClose={() => setInfoType(null)} />
+        <LandingPage onNavigate={navigateToAuth} onOpenInfo={setInfoType} />
+      </>
+    );
   }
 
   // Auth View
   return (
-    <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif', padding: 16 }}>
-      <button onClick={() => setView('landing')} style={{ position: 'absolute', top: isMobile ? 16 : 30, left: isMobile ? 16 : 30, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
-        ← Back to Home
-      </button>
+    <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', flexDirection: 'column', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <InfoModal type={infoType} onClose={() => setInfoType(null)} />
+      
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, position: 'relative' }}>
+        <button onClick={() => setView('landing')} style={{ position: 'absolute', top: isMobile ? 16 : 30, left: isMobile ? 16 : 30, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}>
+          ← Back to Home
+        </button>
 
-      <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', padding: isMobile ? '30px 20px' : '40px', borderRadius: 24, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', boxSizing: 'border-box' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 32 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Activity style={{ width: 24, height: 24, color: '#020617' }} />
-          </div>
-          <span style={{ fontSize: 24, fontWeight: 900, color: '#fff', letterSpacing: '-0.03em' }}>AlphaStructure</span>
-        </div>
-
-        <h2 style={{ color: '#fff', fontSize: 20, fontWeight: 700, textAlign: 'center', marginBottom: 8 }}>
-          {isLoginMode ? 'Client Login' : 'Start Free Trial'}
-        </h2>
-        <p style={{ textAlign: 'center', color: '#64748b', fontSize: 13, marginBottom: 24 }}>
-          {isLoginMode ? 'Enter your credentials to access the terminal.' : 'Create an account to access the live charting matrix.'}
-        </p>
+        <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', padding: isMobile ? '30px 20px' : '40px', borderRadius: 24, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)', boxSizing: 'border-box' }}>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <button onClick={handleGoogleAuth} type="button" style={{ width: '100%', background: '#fff', color: '#0f172a', padding: '12px', borderRadius: 10, fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, transition: 'background 0.2s' }}>
@@ -1561,6 +1621,8 @@ export default function App() {
           </button>
         </div>
       </div>
+      </div>
+      <SharedFooter onOpenInfo={setInfoType} />
     </div>
   );
 }
