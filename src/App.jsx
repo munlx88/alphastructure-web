@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously } from 'firebase/auth';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader } from 'lucide-react';
+import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2 } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -17,7 +17,9 @@ const useIsMobile = () => {
 };
 
 // ─── Firebase Setup ───────────────────────────────────────────────────────────
-const firebaseConfig = {
+// Using environment variables if provided, otherwise falling back to defaults.
+const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
   authDomain: "auth.alphastructure.io",
   projectId: "alphastructure",
@@ -573,7 +575,7 @@ function DashboardCore({ user }) {
     setProfile(prev => prev || fallbackProfile);
     
     // 1. Fetch User Profile
-    const profileRef = doc(db, 'users', user.uid);
+    const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
     const unsubProfile = onSnapshot(profileRef, (docSnap) => {
       if (docSnap.exists()) {
         setProfile(docSnap.data());
@@ -587,7 +589,7 @@ function DashboardCore({ user }) {
     });
 
     // 2. Fetch Subscription Plans Config
-    const configRef = doc(db, 'config', 'subscription_plans');
+    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans');
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists() && docSnap.data().plans) {
         setPlans(docSnap.data().plans);
@@ -601,11 +603,10 @@ function DashboardCore({ user }) {
     });
 
     // 3. Fetch Market Data (From Python Engine)
-    const unsubMarket = onSnapshot(collection(db, 'market_data'), snap => {
+    const unsubMarket = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'market_data'), snap => {
       const nd = {};
       let hasData = false;
       snap.forEach(document => {
-        if (document.id === 'subscription_plans') return; 
         const d = document.data();
         if (d.price !== undefined) {
              hasData = true;
@@ -627,8 +628,14 @@ function DashboardCore({ user }) {
         setConnected(false);
     });
     
-    // 4. Fetch All Users for Admin Panel
-    const allProfilesRef = collection(db, 'users');
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); };
+  }, [user]);
+
+  // Separate effect to handle admin user list securely
+  useEffect(() => {
+    if (!db || profile?.role !== 'admin') return;
+    
+    const allProfilesRef = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
     const unsubAll = onSnapshot(allProfilesRef, (snapshot) => {
       const usersList = [];
       snapshot.forEach((d) => usersList.push({ id: d.id, ...d.data() }));
@@ -638,13 +645,13 @@ function DashboardCore({ user }) {
       console.warn("All-users read blocked (expected for non-admins):", error.code);
     });
 
-    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubAll(); };
-  }, [user]);
+    return () => unsubAll();
+  }, [db, profile?.role]);
 
   // Admin Management Logic
   const handleAdminUpdate = async (uid, field, value) => {
     if (!db || profile?.role !== 'admin') return;
-    const userRef = doc(db, 'users', uid);
+    const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', uid);
     try {
       if (field === 'role') {
         await updateDoc(userRef, { role: value });
@@ -659,6 +666,32 @@ function DashboardCore({ user }) {
     }
   };
 
+  const handleCreateMockUser = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    const randomId = Math.random().toString(36).substring(2, 10);
+    const mockUser = {
+      uid: `mock_${randomId}`,
+      role: 'customer',
+      email: `trader_${randomId}@example.com`,
+      subscription: { plan: 'free', status: 'active', since: new Date().toISOString() },
+      createdAt: new Date().toISOString()
+    };
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', mockUser.uid), mockUser);
+    } catch (err) {
+      console.error("Failed to create mock user", err);
+    }
+  };
+
+  const handleDeleteUser = async (uid) => {
+    if (!db || profile?.role !== 'admin') return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', uid));
+    } catch (err) {
+      console.error("Failed to delete user", err);
+    }
+  };
+
   const handlePlanChange = (index, field, value) => {
     const newPlans = [...editablePlans];
     newPlans[index][field] = value;
@@ -669,7 +702,7 @@ function DashboardCore({ user }) {
     if (!db || profile?.role !== 'admin') return;
     setSaveStatus('Saving...');
     try {
-      await setDoc(doc(db, 'config', 'subscription_plans'), { plans: editablePlans });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans'), { plans: editablePlans });
       setSaveStatus('Saved successfully!');
       setTimeout(() => setSaveStatus(''), 2000);
     } catch (err) {
@@ -686,7 +719,7 @@ function DashboardCore({ user }) {
       setPaymentSuccess(true);
       
       if (user && profile && db) {
-        const profileRef = doc(db, 'users', user.uid);
+        const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
         setDoc(profileRef, {
           ...profile,
           subscription: {
@@ -707,10 +740,15 @@ function DashboardCore({ user }) {
 
   const toggleDevAdminRole = () => {
     if (user && profile && db) {
-      const profileRef = doc(db, 'users', user.uid);
+      const newRole = profile.role === 'admin' ? 'customer' : 'admin';
+      
+      // Optimistic UI Update so the button responds instantly
+      setProfile({ ...profile, role: newRole });
+      
+      const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
       setDoc(profileRef, {
         ...profile,
-        role: profile.role === 'admin' ? 'customer' : 'admin'
+        role: newRole
       }, { merge: true }).catch(e => console.error("Error toggling dev admin", e));
     }
   };
@@ -729,7 +767,9 @@ function DashboardCore({ user }) {
 
   const syms = Object.keys(safeMarketData);
   const isAdmin = profile.role === 'admin';
-  const hasProAccess = profile.subscription?.plan !== 'free';
+  
+  // CHANGED: Admin bypasses the paywall automatically.
+  const hasProAccess = profile.subscription?.plan !== 'free' || isAdmin;
 
   const isHold  = data.signal.decision === 'HOLD';
   const isBuy   = data.signal.decision.includes('BUY');
@@ -958,6 +998,18 @@ function DashboardCore({ user }) {
       {/* ─── BILLING VIEW ─── */}
       {dashView === 'billing' && (
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
+          
+          {/* Admin Banner */}
+          {isAdmin && (
+            <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#10b981' }}>
+              <Shield style={{ width: 24, height: 24 }} />
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px 0' }}>Administrator Access Active</h3>
+                <p style={{ margin: 0, fontSize: 13, color: '#a7f3d0' }}>Your account bypasses all paywalls. You can test the subscription flows below, but your terminal is already fully unlocked.</p>
+              </div>
+            </div>
+          )}
+
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <h1 style={{ fontSize: isMobile ? 28 : 36, fontWeight: 900, marginBottom: 16 }}>Choose Your Trading Edge</h1>
             <p style={{ color: '#94a3b8', fontSize: 16, maxWidth: 600, margin: '0 auto' }}>Upgrade your license to unlock the full potential of the AlphaStructure engine directly on your dashboard.</p>
@@ -1023,63 +1075,82 @@ function DashboardCore({ user }) {
           </div>
 
           {adminTab === 'users' && (
-            <div style={{ background: '#0f172a', borderRadius: 16, border: '1px solid #1e293b', overflow: 'hidden' }}>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                  <thead style={{ background: '#020617', borderBottom: '1px solid #1e293b' }}>
-                    <tr>
-                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>User / ID</th>
-                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Role</th>
-                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Plan</th>
-                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Joined</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allUsers.map(u => (
-                      <tr key={u.id} style={{ borderBottom: '1px solid #1e293b', background: u.role === 'admin' ? 'rgba(99,102,241,0.02)' : 'transparent' }}>
-                        <td style={{ padding: '16px 24px' }}>
-                          <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{u.email}</div>
-                          <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b', marginTop: 4 }}>{u.uid}</div>
-                        </td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <select 
-                            value={u.role || 'customer'} 
-                            onChange={(e) => handleAdminUpdate(u.id, 'role', e.target.value)}
-                            disabled={u.id === user.uid}
-                            style={{ 
-                              background: u.role === 'admin' ? 'rgba(99,102,241,0.1)' : '#1e293b', 
-                              color: u.role === 'admin' ? '#818cf8' : '#94a3b8', 
-                              border: `1px solid ${u.role === 'admin' ? 'rgba(99,102,241,0.2)' : '#334155'}`, 
-                              borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: u.id === user.uid ? 'not-allowed' : 'pointer',
-                              appearance: 'none', WebkitAppearance: 'none'
-                            }}
-                          >
-                            <option value="customer" style={{ background: '#0f172a', color: '#fff' }}>Customer</option>
-                            <option value="admin" style={{ background: '#0f172a', color: '#fff' }}>Admin</option>
-                          </select>
-                        </td>
-                        <td style={{ padding: '16px 24px' }}>
-                          <select 
-                            value={u.subscription?.plan || 'free'} 
-                            onChange={(e) => handleAdminUpdate(u.id, 'plan', e.target.value)}
-                            style={{ 
-                              background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', 
-                              borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: 'pointer',
-                              appearance: 'none', WebkitAppearance: 'none'
-                            }}
-                          >
-                            {plans.map(p => (
-                              <option key={p.id} value={p.id} style={{ background: '#0f172a', color: '#fff' }}>{p.name} (${p.price})</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ padding: '16px 24px', fontSize: 13, color: '#94a3b8' }}>
-                          {new Date(u.createdAt).toLocaleDateString()}
-                        </td>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button onClick={handleCreateMockUser} style={{ background: '#10b981', color: '#020617', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <UserPlus style={{ width: 16, height: 16 }} /> Generate Mock User
+                </button>
+              </div>
+              <div style={{ background: '#0f172a', borderRadius: 16, border: '1px solid #1e293b', overflow: 'hidden' }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                    <thead style={{ background: '#020617', borderBottom: '1px solid #1e293b' }}>
+                      <tr>
+                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>User / ID</th>
+                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Role</th>
+                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Plan</th>
+                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Joined</th>
+                        <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', textAlign: 'right' }}>Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {allUsers.map(u => (
+                        <tr key={u.id} style={{ borderBottom: '1px solid #1e293b', background: u.role === 'admin' ? 'rgba(99,102,241,0.02)' : 'transparent' }}>
+                          <td style={{ padding: '16px 24px' }}>
+                            <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{u.email}</div>
+                            <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b', marginTop: 4 }}>{u.uid}</div>
+                          </td>
+                          <td style={{ padding: '16px 24px' }}>
+                            <select 
+                              value={u.role || 'customer'} 
+                              onChange={(e) => handleAdminUpdate(u.id, 'role', e.target.value)}
+                              disabled={u.id === user.uid}
+                              style={{ 
+                                background: u.role === 'admin' ? 'rgba(99,102,241,0.1)' : '#1e293b', 
+                                color: u.role === 'admin' ? '#818cf8' : '#94a3b8', 
+                                border: `1px solid ${u.role === 'admin' ? 'rgba(99,102,241,0.2)' : '#334155'}`, 
+                                borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: u.id === user.uid ? 'not-allowed' : 'pointer',
+                                appearance: 'none', WebkitAppearance: 'none'
+                              }}
+                            >
+                              <option value="customer" style={{ background: '#0f172a', color: '#fff' }}>Customer</option>
+                              <option value="admin" style={{ background: '#0f172a', color: '#fff' }}>Admin</option>
+                            </select>
+                          </td>
+                          <td style={{ padding: '16px 24px' }}>
+                            <select 
+                              value={u.subscription?.plan || 'free'} 
+                              onChange={(e) => handleAdminUpdate(u.id, 'plan', e.target.value)}
+                              style={{ 
+                                background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', 
+                                borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: 'pointer',
+                                appearance: 'none', WebkitAppearance: 'none'
+                              }}
+                            >
+                              {plans.map(p => (
+                                <option key={p.id} value={p.id} style={{ background: '#0f172a', color: '#fff' }}>{p.name} (${p.price})</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td style={{ padding: '16px 24px', fontSize: 13, color: '#94a3b8' }}>
+                            {new Date(u.createdAt).toLocaleDateString()}
+                          </td>
+                          <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                            {u.id !== user.uid && (
+                              <button 
+                                onClick={() => handleDeleteUser(u.id)}
+                                style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                title="Delete User"
+                              >
+                                <Trash2 style={{ width: 14, height: 14 }} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
@@ -1270,12 +1341,21 @@ export default function App() {
     // 1. Initialize Firebase Auth Flow safely inside useEffect
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (tokenErr) {
+            console.warn("Custom token mismatch. Anonymous fallback skipped.");
+            try { await signInAnonymously(auth); } catch (anonErr) { console.warn("Anonymous auth disabled."); }
+          }
+        } else {
+          try { await signInAnonymously(auth); } catch (anonErr) { console.warn("Anonymous auth disabled."); }
+        }
       } catch (err) {
-        console.error("Auth init error:", err);
+        console.warn("Auth init warning:", err.message);
       }
     };
-    // initAuth(); // Only uncomment if you want forced anonymous login
+    initAuth();
 
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
@@ -1377,14 +1457,3 @@ export default function App() {
             </button>
           </form>
         </div>
-
-        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: '#64748b' }}>
-          {isLoginMode ? 'Need an account?' : 'Already have an account?'}
-          <button onClick={() => setIsLoginMode(!isLoginMode)} style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 700, cursor: 'pointer', padding: '0 0 0 6px' }}>
-            {isLoginMode ? 'Register' : 'Sign In'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
