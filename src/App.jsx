@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save } from 'lucide-react';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -748,6 +748,34 @@ function DashboardCore({ user, onOpenInfo }) {
     }
   };
 
+  // ── NEW PLAN MANAGEMENT LOGIC ──
+  const handleAddPlan = () => {
+    const newPlan = { 
+      id: `plan_${Date.now()}`, 
+      name: 'New Plan', 
+      price: 0, 
+      interval: 'Month', 
+      stripePriceId: '', 
+      features: ['New Feature 1'], 
+      color: '#38bdf8' 
+    };
+    setEditablePlans([...editablePlans, newPlan]);
+  };
+
+  const handleRemovePlan = (index) => {
+    if (window.confirm("Are you sure you want to remove this plan from the checkout?")) {
+      const newPlans = editablePlans.filter((_, i) => i !== index);
+      setEditablePlans(newPlans);
+    }
+  };
+
+  const handleRestoreDefaults = () => {
+    if (window.confirm("This will overwrite your unsaved edits with the default 3-tier AlphaStructure plans. Continue?")) {
+      setEditablePlans(DEFAULT_PLANS);
+      showNotification('Defaults restored! Click Save to apply.', 'info');
+    }
+  };
+
   const handlePlanChange = (index, field, value) => {
     const newPlans = [...editablePlans];
     newPlans[index][field] = value;
@@ -1274,15 +1302,29 @@ if (profile?.status === 'suspended') {
 
           {adminTab === 'plans' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button onClick={handleRestoreDefaults} style={{ background: '#1e293b', color: '#cbd5e1', padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 700, border: 'none', cursor: 'pointer', transition: 'background 0.2s' }}>
+                    Restore Defaults
+                  </button>
+                  <button onClick={handleAddPlan} style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)', padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
+                    <Plus style={{ width: 16, height: 16 }} /> Add Plan
+                  </button>
+                </div>
                 <button onClick={handleSavePlans} style={{ background: '#38bdf8', color: '#020617', padding: '10px 24px', borderRadius: 8, fontSize: 14, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Shield style={{ width: 16, height: 16 }} /> Save Active Plans
                 </button>
               </div>
+              
               <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 24 }}>
                 {editablePlans.map((plan, i) => (
-                  <div key={i} style={{ background: '#0f172a', padding: 24, borderRadius: 16, border: `1px solid ${plan.color}40` }}>
-                    <div style={{ marginBottom: 16 }}>
+                  <div key={i} style={{ background: '#0f172a', padding: 24, borderRadius: 16, border: `1px solid ${plan.color}40`, position: 'relative' }}>
+                    
+                    <button onClick={() => handleRemovePlan(i)} style={{ position: 'absolute', top: 16, right: 16, background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', padding: 4 }} title="Remove Plan">
+                      <Trash2 style={{ width: 16, height: 16 }} />
+                    </button>
+
+                    <div style={{ marginBottom: 16, paddingRight: 24 }}>
                       <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Plan Name</label>
                       <input value={plan.name} onChange={e => handlePlanChange(i, 'name', e.target.value)} style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, outline: 'none', boxSizing: 'border-box' }} />
                     </div>
