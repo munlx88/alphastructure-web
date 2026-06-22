@@ -584,9 +584,10 @@ function DashboardCore({ user, onOpenInfo }) {
   
   // Dynamic Plans & Admin State
   const [plans, setPlans] = useState(DEFAULT_PLANS);
-  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe'
+  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe', 'app_config'
   const [editablePlans, setEditablePlans] = useState([]);
   const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
+  const [appSettings, setAppSettings] = useState({ exeUrl: '', version: '1.0.0' });
   const [notification, setNotification] = useState({ show: false, msg: '', type: 'info' });
 
   // Stripe Processing State
@@ -677,8 +678,14 @@ function DashboardCore({ user, onOpenInfo }) {
     }, (error) => {
         // Only ignore if missing permissions, which is standard for non-admins
     });
+
+    // 5. Fetch Client App Download Settings
+    const appSettingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'app_settings');
+    const unsubAppSettings = onSnapshot(appSettingsRef, (docSnap) => {
+      if (docSnap.exists()) setAppSettings(docSnap.data());
+    }, (error) => console.warn("App settings read blocked:", error.code));
     
-    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); };
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); unsubAppSettings(); };
   }, [user]);
 
   // Separate effect to handle admin user list securely
@@ -767,6 +774,16 @@ function DashboardCore({ user, onOpenInfo }) {
     }
   };
 
+  const handleSaveAppSettings = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'app_settings'), appSettings);
+      showNotification('App Download Links saved successfully!', 'success');
+    } catch (err) {
+      showNotification(`Save Failed: Check Firebase rules.`, 'error');
+    }
+  };
+
   // REAL PRODUCTION STRIPE LOGIC (Requires Firebase Stripe Extension or Cloud Function)
   const handleRealStripeCheckout = async () => {
     if (!checkoutPlan || !checkoutPlan.stripePriceId) {
@@ -837,6 +854,7 @@ if (profile?.status === 'suspended') {
   const syms = Object.keys(safeMarketData);
   const isAdmin = profile.role === 'admin';
   const hasProAccess = profile.subscription?.plan !== 'free' || isAdmin;
+  const hasDeskAccess = profile.subscription?.plan === 'desk_pro' || profile.subscription?.plan === 'lifetime' || isAdmin;
 
   const isHold  = data.signal.decision === 'HOLD';
   const isBuy   = data.signal.decision.includes('BUY');
@@ -926,12 +944,21 @@ if (profile?.status === 'suspended') {
           
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', minWidth: 0 }}>
             
-            {/* ─── ENGINE STATUS ─── */}
-            <div style={{ background: connected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', border: `1px solid ${connected ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`, borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Activity style={{ width: 20, height: 20, color: connected ? '#10b981' : '#f43f5e', flexShrink: 0 }} />
-              <span style={{ color: connected ? '#10b981' : '#f43f5e', fontSize: 13, fontWeight: 800, letterSpacing: '0.05em' }}>
-                {connected ? 'ENGINE ONLINE' : 'ENGINE OFFLINE'}
-              </span>
+            {/* ─── ENGINE STATUS & APP DOWNLOAD ─── */}
+            <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'stretch' : 'center', gap: 16 }}>
+              <div style={{ background: connected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(244, 63, 94, 0.1)', border: `1px solid ${connected ? 'rgba(16, 185, 129, 0.3)' : 'rgba(244, 63, 94, 0.3)'}`, borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Activity style={{ width: 20, height: 20, color: connected ? '#10b981' : '#f43f5e', flexShrink: 0 }} />
+                <span style={{ color: connected ? '#10b981' : '#f43f5e', fontSize: 13, fontWeight: 800, letterSpacing: '0.05em' }}>
+                  {connected ? 'ENGINE ONLINE' : 'ENGINE OFFLINE'}
+                </span>
+              </div>
+              
+              {hasDeskAccess && appSettings.exeUrl && (
+                <a href={appSettings.exeUrl} target="_blank" rel="noreferrer" style={{ background: 'linear-gradient(135deg, #6366f1, #38bdf8)', color: '#fff', textDecoration: 'none', padding: '12px 20px', borderRadius: 12, fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, border: 'none', boxShadow: '0 4px 15px rgba(56, 189, 248, 0.3)' }}>
+                  <Shield style={{ width: 16, height: 16 }} />
+                  Download Client App (v{appSettings.version})
+                </a>
+              )}
             </div>
 
             {/* Chart Card */}
@@ -1155,6 +1182,7 @@ if (profile?.status === 'suspended') {
               <button onClick={() => setAdminTab('users')} style={{ background: adminTab === 'users' ? '#1e293b' : 'transparent', color: adminTab === 'users' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Users</button>
               <button onClick={() => setAdminTab('plans')} style={{ background: adminTab === 'plans' ? '#1e293b' : 'transparent', color: adminTab === 'plans' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Subscription Tiers</button>
               <button onClick={() => setAdminTab('stripe')} style={{ background: adminTab === 'stripe' ? '#1e293b' : 'transparent', color: adminTab === 'stripe' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Stripe Settings</button>
+              <button onClick={() => setAdminTab('app_config')} style={{ background: adminTab === 'app_config' ? '#1e293b' : 'transparent', color: adminTab === 'app_config' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>App Downloads</button>
             </div>
           </div>
 
@@ -1323,6 +1351,37 @@ if (profile?.status === 'suspended') {
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button onClick={handleSaveStripe} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Save style={{ width: 18, height: 18 }} /> Save Stripe Configuration
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {adminTab === 'app_config' && (
+            <div style={{ maxWidth: 800 }}>
+              <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#10b981' }}>
+                <Shield style={{ width: 24, height: 24, flexShrink: 0 }} />
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 4px 0' }}>Client .exe Distribution</h3>
+                  <p style={{ margin: 0, fontSize: 13, color: '#a7f3d0', lineHeight: 1.5 }}>Paste the Google Drive, Dropbox, or direct download link for your compiled Client App. This button will only appear for users with an active Desk Premium or Lifetime license.</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid #1e293b' }}>
+                
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Download Link (URL)</label>
+                  <input value={appSettings.exeUrl} onChange={e => setAppSettings({...appSettings, exeUrl: e.target.value})} placeholder="https://drive.google.com/file/d/..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+                
+                <div style={{ marginBottom: 32 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>App Version Number</label>
+                  <input value={appSettings.version} onChange={e => setAppSettings({...appSettings, version: e.target.value})} placeholder="1.0.0" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={handleSaveAppSettings} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Save style={{ width: 18, height: 18 }} /> Save Download Links
                   </button>
                 </div>
               </div>
