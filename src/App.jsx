@@ -1221,7 +1221,6 @@ function DashboardCore({ user }) {
           {adminTab === 'plans' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
-                {saveStatus && <span style={{ fontSize: 13, color: '#10b981', fontWeight: 600 }}>{saveStatus}</span>}
                 <button onClick={handleSavePlans} style={{ background: '#38bdf8', color: '#020617', padding: '10px 24px', borderRadius: 8, fontSize: 14, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Shield style={{ width: 16, height: 16 }} /> Save Active Plans
                 </button>
@@ -1253,7 +1252,7 @@ function DashboardCore({ user }) {
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Features (One per line)</label>
-                      <textarea value={plan.features.join('\n')} onChange={e => handlePlanChange(i, 'features', e.target.value.split('\n'))} style={{ width: '100%', height: 120, background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#cbd5e1', fontSize: 13, lineHeight: 1.5, outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
+                      <textarea value={(plan.features || []).join('\n')} onChange={e => handlePlanChange(i, 'features', e.target.value.split('\n'))} style={{ width: '100%', height: 120, background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#cbd5e1', fontSize: 13, lineHeight: 1.5, outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
                     </div>
                   </div>
                 ))}
