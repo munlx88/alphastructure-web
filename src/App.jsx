@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
 import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, Crown, CheckCircle2, XCircle, Loader2, Settings, Trash2 } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
@@ -15,8 +15,10 @@ const useIsMobile = () => {
   return isMobile;
 };
 
-// ─── Firebase ─────────────────────────────────────────────────────────────────
-const firebaseConfig = {
+// ─── Firebase Setup ───────────────────────────────────────────────────────────
+// Using environment variables if provided, otherwise falling back to defaults.
+const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
+const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
   authDomain: "auth.alphastructure.io",
   projectId: "alphastructure",
@@ -25,13 +27,10 @@ const firebaseConfig = {
   appId: "1:962716149021:web:d7dd8f55a09b11ce54adf4",
 };
 
-let db = null;
-let auth = null;
-try { 
-  const app = initializeApp(firebaseConfig); 
-  db = getFirestore(app); 
-  auth = getAuth(app);
-} catch (e) {}
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 // ─── Seeded RNG + 200 Candle Generator ────────────────────────────────────────
 function seededRng(seed) {
@@ -558,74 +557,90 @@ function DashboardCore({ user }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
 
-  // Admin Action State
-  const [userToDelete, setUserToDelete] = useState(null);
-
-  // Sync Profile
+  // Sync Profile & Market Data
   useEffect(() => {
     if (!db || !user) return;
+
+    // ── SET FALLBACK PROFILE IMMEDIATELY ──────────────────────────────────────
+    const fallbackProfile = {
+      uid: user.uid,
+      role: 'customer',
+      email: user.email || `user_${user.uid.substring(0, 5)}@example.com`,
+      subscription: { plan: 'free', status: 'active', since: new Date().toISOString() },
+      createdAt: new Date().toISOString()
+    };
     
-    // Fetch individual profile
-    const profileRef = doc(db, 'users', user.uid);
+    // App renders even if Firestore never responds
+    setProfile(prev => prev || fallbackProfile);
+    
+    // 1. Fetch User Profile
+    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
     const unsubProfile = onSnapshot(profileRef, (docSnap) => {
       if (docSnap.exists()) {
         setProfile(docSnap.data());
       } else {
-        // Create default profile for new user
-        const defaultProfile = {
-          uid: user.uid,
-          role: 'customer',
-          email: user.email || `user_${user.uid.substring(0, 5)}@example.com`,
-          subscription: {
-            plan: 'free',
-            status: 'active',
-            since: new Date().toISOString()
-          },
-          createdAt: new Date().toISOString()
-        };
-        setDoc(profileRef, defaultProfile);
-        setProfile(defaultProfile);
+        setDoc(profileRef, fallbackProfile).catch(err => console.warn("Profile creation blocked by rules:", err.code));
+        setProfile(fallbackProfile);
       }
+    }, (error) => {
+      console.warn("Profile read blocked by Firestore rules:", error.code);
+      setProfile(fallbackProfile);
     });
 
-    // Fetch dynamic plans from config
-    const configRef = doc(db, 'config', 'subscription_plans');
+    // 2. Fetch Subscription Plans Config
+    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans');
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists() && docSnap.data().plans) {
         setPlans(docSnap.data().plans);
         setEditablePlans(docSnap.data().plans);
       } else {
-        setDoc(configRef, { plans: DEFAULT_PLANS });
         setPlans(DEFAULT_PLANS);
         setEditablePlans(DEFAULT_PLANS);
       }
+    }, (error) => {
+      console.warn("Config read blocked:", error.code);
     });
 
-    // Fetch all profiles for Admin
-    const allProfilesRef = collection(db, 'users');
-    const unsubAll = onSnapshot(allProfilesRef, (snapshot) => {
-      const usersList = [];
-      snapshot.forEach((d) => usersList.push({ id: d.id, ...d.data() }));
-      usersList.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      setAllUsers(usersList);
-    });
-
-    // Fetch market data
-    const unsubMarket = onSnapshot(collection(db, 'market_data'), snap => {
+    // 3. Fetch Market Data (From Python Engine)
+    const unsubMarket = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'market_data'), snap => {
       const nd = {};
+      let hasData = false;
       snap.forEach(document => {
         const d = document.data();
-        nd[document.id] = { ...(SIM[document.id] || {}), ...d, candles: d.candles?.length > 0 ? d.candles : (SIM[document.id]?.candles || []) };
+        if (d.price !== undefined) {
+             hasData = true;
+             nd[document.id] = { ...(SIM[document.id] || {}), ...d, candles: d.candles?.length > 0 ? d.candles : (SIM[document.id]?.candles || []) };
+        }
       });
-      if (Object.keys(nd).length > 0) { setMarketData(nd); setConnected(true); if (!nd[sym]) setSym(Object.keys(nd)[0]); }
-    }, err => console.error(err));
-    return () => { unsubProfile(); unsubAll(); unsubMarket(); unsubConfig(); };
-  }, [user, sym]);
+      
+      if (hasData && Object.keys(nd).length > 0) { 
+          setMarketData(nd); 
+          setConnected(true); 
+          setSym(currentSym => nd[currentSym] ? currentSym : Object.keys(nd)[0]);
+      } else {
+          setMarketData(SIM);
+          setConnected(false);
+      }
+    }, err => {
+        console.warn("Market data read blocked:", err.code);
+        setMarketData(SIM);
+        setConnected(false);
+    });
+    
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); };
+  }, [user]);
+
+  // Separate effect to handle admin user list securely
+  useEffect(() => {
+    if (profile && profile.role === 'admin') {
+         setAllUsers([{ id: user.uid, ...profile }]);
+    }
+  }, [profile, user.uid]);
 
   // Admin Management Logic
   const handleAdminUpdate = async (uid, field, value) => {
     if (!db || profile?.role !== 'admin') return;
-    const userRef = doc(db, 'users', uid);
+    const userRef = doc(db, 'artifacts', appId, 'users', uid, 'profile', 'main');
     try {
       if (field === 'role') {
         await updateDoc(userRef, { role: value });
@@ -650,11 +665,12 @@ function DashboardCore({ user }) {
     if (!db || profile?.role !== 'admin') return;
     setSaveStatus('Saving...');
     try {
-      await setDoc(doc(db, 'config', 'subscription_plans'), { plans: editablePlans });
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans'), { plans: editablePlans });
       setSaveStatus('Saved successfully!');
       setTimeout(() => setSaveStatus(''), 2000);
     } catch (err) {
       setSaveStatus('Error saving plans');
+      console.error(err);
     }
   };
 
@@ -666,7 +682,7 @@ function DashboardCore({ user }) {
       setPaymentSuccess(true);
       
       if (user && profile && db) {
-        const profileRef = doc(db, 'users', user.uid);
+        const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
         setDoc(profileRef, {
           ...profile,
           subscription: {
@@ -674,7 +690,7 @@ function DashboardCore({ user }) {
             status: 'active',
             since: new Date().toISOString()
           }
-        }, { merge: true });
+        }, { merge: true }).catch(e => console.error("Error upgrading plan", e));
       }
 
       setTimeout(() => {
@@ -687,23 +703,27 @@ function DashboardCore({ user }) {
 
   const toggleDevAdminRole = () => {
     if (user && profile && db) {
-      const profileRef = doc(db, 'users', user.uid);
+      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
       setDoc(profileRef, {
         ...profile,
         role: profile.role === 'admin' ? 'customer' : 'admin'
-      }, { merge: true });
+      }, { merge: true }).catch(e => console.error("Error toggling dev admin", e));
     }
   };
 
-  if (!profile || !marketData[sym]) return (
+  // Safe data extraction to prevent loading screen freeze
+  const safeMarketData = marketData || SIM;
+  const currentSym = safeMarketData[sym] ? sym : Object.keys(safeMarketData)[0];
+  const data = safeMarketData[currentSym];
+
+  if (!profile || !data) return (
     <div style={{ height: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
       <Activity style={{ width: 32, height: 32, color: '#38bdf8', animation: 'spin 2s linear infinite' }} />
       <span style={{ color: '#64748b', fontSize: 13, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 600 }}>Syncing Database...</span>
     </div>
   );
 
-  const data = marketData[sym];
-  const syms = Object.keys(marketData);
+  const syms = Object.keys(safeMarketData);
   const isAdmin = profile.role === 'admin';
   const hasProAccess = profile.subscription?.plan !== 'free';
 
@@ -1243,14 +1263,28 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    if (!auth) { setLoading(false); return; }
+    // 1. Initialize Firebase Auth Flow safely inside useEffect
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          // If no custom token exists, use anonymous auth to prevent permissions errors
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth init error:", err);
+      }
+    };
+    initAuth();
+
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
       if (u && view !== 'dashboard') setView('dashboard');
     });
     return () => unsub();
-  }, [view]);
+  }, []); // Run ONCE on mount
 
   const handleGoogleAuth = async () => {
     setAuthError('');
@@ -1330,11 +1364,11 @@ export default function App() {
           <form onSubmit={handleAuth} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
               <label style={{ display: 'block', color: '#64748b', fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email Address</label>
-              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} placeholder="trader@example.com" />
+              <input type="email" value={email} required onChange={e => setEmail(e.target.value)} style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} placeholder="trader@example.com" />
             </div>
             <div>
               <label style={{ display: 'block', color: '#64748b', fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} placeholder="••••••••" />
+              <input type="password" value={password} required onChange={e => setPassword(e.target.value)} style={{ width: '100%', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px 16px', borderRadius: 10, color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' }} placeholder="••••••••" />
             </div>
 
             {authError && <div style={{ color: '#f43f5e', fontSize: 13, background: 'rgba(244,63,94,0.1)', padding: '10px', borderRadius: 8, border: '1px solid rgba(244,63,94,0.2)', textAlign: 'center' }}>{authError}</div>}
@@ -1344,14 +1378,3 @@ export default function App() {
             </button>
           </form>
         </div>
-
-        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: '#64748b' }}>
-          {isLoginMode ? 'Need an account?' : 'Already have an account?'}
-          <button onClick={() => setIsLoginMode(!isLoginMode)} style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 700, cursor: 'pointer', padding: '0 0 0 6px' }}>
-            {isLoginMode ? 'Register' : 'Sign In'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
