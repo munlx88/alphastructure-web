@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { Activity, Zap, Server, Target, Crosshair, Lock, User, LogOut, CreditCard, ChevronRight, BarChart2, Cpu, Shield, ArrowRight } from 'lucide-react';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, Crown, CheckCircle2, XCircle, Loader2, Settings, Trash2 } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -33,7 +33,7 @@ try {
   auth = getAuth(app);
 } catch (e) {}
 
-// ─── Seeded RNG + 200 Candle Generator (Allows Panning) ──────────────────────
+// ─── Seeded RNG + 200 Candle Generator ────────────────────────────────────────
 function seededRng(seed) {
   let s = seed;
   return () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
@@ -98,6 +98,13 @@ function buildSim(sym) {
   };
 }
 const SIM = Object.fromEntries(Object.keys(SCFG).map(s => [s, buildSim(s)]));
+
+// ─── Subscriptions & Plans ───────────────────────────────────────────────────
+const DEFAULT_PLANS = [
+  { id: 'free', name: '7-Day Free Trial', price: 0, interval: '7 Days', features: ['Access to daily bias', 'End of day reports', 'Community access'], color: '#334155' },
+  { id: 'monthly', name: 'Alpha Pro (Monthly)', price: 20, interval: 'Month', features: ['Live Engine Telemetry', 'M15/H1 Execution Signals', 'Advanced Trade Management', 'Discord VIP'], color: '#38bdf8' },
+  { id: 'quarterly', name: 'Alpha Pro (Quarterly)', price: 51, interval: '3 Months', discount: '15% OFF', features: ['All Monthly Features', 'Unrestricted Desktop .exe', 'Auto-Trade Execution', '1-on-1 Support'], color: '#10b981' }
+];
 
 // ─── Interactive Pure HTML5 Canvas Chart ──────────────────────────────────────
 const StructuralChart = ({ data, symbol, isMobile }) => {
@@ -534,30 +541,171 @@ function DashboardCore({ user }) {
   const [marketData,  setMarketData]  = useState(SIM);
   const [connected,   setConnected]   = useState(false);
   const [sym,         setSym]         = useState('GBPUSD');
-  const [isSubscribed, setIsSubscribed] = useState(false); // MOCK STRIPE STATE
+  
+  // Account & Role Management State
+  const [profile, setProfile] = useState(null);
+  const [allUsers, setAllUsers] = useState([]);
+  const [dashView, setDashView] = useState('terminal'); // 'terminal', 'billing', 'admin'
+  
+  // Dynamic Plans & Admin State
+  const [plans, setPlans] = useState(DEFAULT_PLANS);
+  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans'
+  const [editablePlans, setEditablePlans] = useState([]);
+  const [saveStatus, setSaveStatus] = useState('');
 
+  // Stripe Simulation State
+  const [checkoutPlan, setCheckoutPlan] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+
+  // Admin Action State
+  const [userToDelete, setUserToDelete] = useState(null);
+
+  // Sync Profile
   useEffect(() => {
     if (!db || !user) return;
-    const unsub = onSnapshot(collection(db, 'market_data'), snap => {
+    
+    // Fetch individual profile
+    const profileRef = doc(db, 'users', user.uid);
+    const unsubProfile = onSnapshot(profileRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setProfile(docSnap.data());
+      } else {
+        // Create default profile for new user
+        const defaultProfile = {
+          uid: user.uid,
+          role: 'customer',
+          email: user.email || `user_${user.uid.substring(0, 5)}@example.com`,
+          subscription: {
+            plan: 'free',
+            status: 'active',
+            since: new Date().toISOString()
+          },
+          createdAt: new Date().toISOString()
+        };
+        setDoc(profileRef, defaultProfile);
+        setProfile(defaultProfile);
+      }
+    });
+
+    // Fetch dynamic plans from config
+    const configRef = doc(db, 'config', 'subscription_plans');
+    const unsubConfig = onSnapshot(configRef, (docSnap) => {
+      if (docSnap.exists() && docSnap.data().plans) {
+        setPlans(docSnap.data().plans);
+        setEditablePlans(docSnap.data().plans);
+      } else {
+        setDoc(configRef, { plans: DEFAULT_PLANS });
+        setPlans(DEFAULT_PLANS);
+        setEditablePlans(DEFAULT_PLANS);
+      }
+    });
+
+    // Fetch all profiles for Admin
+    const allProfilesRef = collection(db, 'users');
+    const unsubAll = onSnapshot(allProfilesRef, (snapshot) => {
+      const usersList = [];
+      snapshot.forEach((d) => usersList.push({ id: d.id, ...d.data() }));
+      usersList.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setAllUsers(usersList);
+    });
+
+    // Fetch market data
+    const unsubMarket = onSnapshot(collection(db, 'market_data'), snap => {
       const nd = {};
-      snap.forEach(doc => {
-        const d = doc.data();
-        nd[doc.id] = { ...(SIM[doc.id] || {}), ...d, candles: d.candles?.length > 0 ? d.candles : (SIM[doc.id]?.candles || []) };
+      snap.forEach(document => {
+        const d = document.data();
+        nd[document.id] = { ...(SIM[document.id] || {}), ...d, candles: d.candles?.length > 0 ? d.candles : (SIM[document.id]?.candles || []) };
       });
       if (Object.keys(nd).length > 0) { setMarketData(nd); setConnected(true); if (!nd[sym]) setSym(Object.keys(nd)[0]); }
     }, err => console.error(err));
-    return () => unsub();
+    return () => { unsubProfile(); unsubAll(); unsubMarket(); unsubConfig(); };
   }, [user, sym]);
 
-  const data  = marketData[sym];
-  const syms  = Object.keys(marketData);
+  // Admin Management Logic
+  const handleAdminUpdate = async (uid, field, value) => {
+    if (!db || profile?.role !== 'admin') return;
+    const userRef = doc(db, 'users', uid);
+    try {
+      if (field === 'role') {
+        await updateDoc(userRef, { role: value });
+      } else if (field === 'plan') {
+        await updateDoc(userRef, {
+          'subscription.plan': value,
+          'subscription.since': new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      console.error("Failed to update user", err);
+    }
+  };
 
-  if (!data) return (
+  const handlePlanChange = (index, field, value) => {
+    const newPlans = [...editablePlans];
+    newPlans[index][field] = value;
+    setEditablePlans(newPlans);
+  };
+
+  const handleSavePlans = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    setSaveStatus('Saving...');
+    try {
+      await setDoc(doc(db, 'config', 'subscription_plans'), { plans: editablePlans });
+      setSaveStatus('Saved successfully!');
+      setTimeout(() => setSaveStatus(''), 2000);
+    } catch (err) {
+      setSaveStatus('Error saving plans');
+    }
+  };
+
+  // Stripe Simulation Logic
+  const handleSimulatePayment = () => {
+    setIsProcessing(true);
+    setTimeout(() => {
+      setIsProcessing(false);
+      setPaymentSuccess(true);
+      
+      if (user && profile && db) {
+        const profileRef = doc(db, 'users', user.uid);
+        setDoc(profileRef, {
+          ...profile,
+          subscription: {
+            plan: checkoutPlan.id,
+            status: 'active',
+            since: new Date().toISOString()
+          }
+        }, { merge: true });
+      }
+
+      setTimeout(() => {
+        setPaymentSuccess(false);
+        setCheckoutPlan(null);
+        setDashView('terminal');
+      }, 2000);
+    }, 2500);
+  };
+
+  const toggleDevAdminRole = () => {
+    if (user && profile && db) {
+      const profileRef = doc(db, 'users', user.uid);
+      setDoc(profileRef, {
+        ...profile,
+        role: profile.role === 'admin' ? 'customer' : 'admin'
+      }, { merge: true });
+    }
+  };
+
+  if (!profile || !marketData[sym]) return (
     <div style={{ height: '100vh', background: '#020617', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16 }}>
       <Activity style={{ width: 32, height: 32, color: '#38bdf8', animation: 'spin 2s linear infinite' }} />
-      <span style={{ color: '#64748b', fontSize: 13, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 600 }}>Syncing Telemetry...</span>
+      <span style={{ color: '#64748b', fontSize: 13, letterSpacing: '0.15em', textTransform: 'uppercase', fontWeight: 600 }}>Syncing Database...</span>
     </div>
   );
+
+  const data = marketData[sym];
+  const syms = Object.keys(marketData);
+  const isAdmin = profile.role === 'admin';
+  const hasProAccess = profile.subscription?.plan !== 'free';
 
   const isHold  = data.signal.decision === 'HOLD';
   const isBuy   = data.signal.decision.includes('BUY');
@@ -572,8 +720,8 @@ function DashboardCore({ user }) {
       <p style={{ color: '#94a3b8', fontSize: 14, margin: '0 0 24px 0', lineHeight: 1.5 }}>
         Subscribe to AlphaStructure Pro to unlock live algorithmic signals, confluence scores, and live order flow arrays.
       </p>
-      <button onClick={() => setIsSubscribed(true)} style={{ background: '#635bff', color: '#fff', padding: '12px 24px', borderRadius: 8, fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <CreditCard style={{ width: 16, height: 16 }} /> Unlock Pro Access
+      <button onClick={() => setDashView('billing')} style={{ background: '#635bff', color: '#fff', padding: '12px 24px', borderRadius: 8, fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <CreditCard style={{ width: 16, height: 16 }} /> Upgrade to Pro
       </button>
     </div>
   );
@@ -585,7 +733,7 @@ function DashboardCore({ user }) {
       <nav style={{ 
         minHeight: 60, display: 'flex', flexDirection: isMobile ? 'column' : 'row', 
         alignItems: isMobile ? 'stretch' : 'center', justifyContent: 'space-between', 
-        padding: isMobile ? '12px 16px' : '0 24px', background: 'rgba(15,23,42,0.6)', 
+        padding: isMobile ? '12px 16px' : '0 24px', background: 'rgba(15,23,42,0.8)', 
         backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.05)', 
         position: 'sticky', top: 0, zIndex: 50, gap: isMobile ? 12 : 0 
       }}>
@@ -599,34 +747,38 @@ function DashboardCore({ user }) {
           </span>
         </div>
 
-        {/* Scrollable Symbol Selector for Mobile */}
-        <div style={{ 
-          display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, 
-          border: '1px solid rgba(255,255,255,0.05)', overflowX: 'auto', whiteSpace: 'nowrap', 
-          maxWidth: '100%', WebkitOverflowScrolling: 'none', msOverflowStyle: 'none' 
-        }}>
-          {syms.map(s => (
-            <button key={s} onClick={() => setSym(s)} style={{
-              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', 
-              border: 'none', transition: 'all 0.2s', flexShrink: 0,
-              background: sym === s ? 'rgba(56,189,248,0.15)' : 'transparent',
-              color: sym === s ? '#38bdf8' : '#64748b',
-            }}>
-              {s}
-            </button>
-          ))}
-        </div>
+        {dashView === 'terminal' && (
+          <div style={{ 
+            display: 'flex', gap: 4, background: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12, 
+            border: '1px solid rgba(255,255,255,0.05)', overflowX: 'auto', whiteSpace: 'nowrap', 
+            maxWidth: '100%', WebkitOverflowScrolling: 'none', msOverflowStyle: 'none' 
+          }}>
+            {syms.map(s => (
+              <button key={s} onClick={() => setSym(s)} style={{
+                padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', 
+                border: 'none', transition: 'all 0.2s', flexShrink: 0,
+                background: sym === s ? 'rgba(56,189,248,0.15)' : 'transparent',
+                color: sym === s ? '#38bdf8' : '#64748b',
+              }}>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'space-between' : 'flex-end', gap: 12 }}>
-          <button onClick={() => setIsSubscribed(!isSubscribed)} style={{ background: isSubscribed ? 'rgba(16,185,129,0.1)' : 'rgba(99,91,255,0.1)', color: isSubscribed ? '#10b981' : '#818cf8', border: `1px solid ${isSubscribed ? 'rgba(16,185,129,0.2)' : 'rgba(99,91,255,0.2)'}`, padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-            {isSubscribed ? '✅ PRO ACTIVE' : '🔥 UPGRADE TO PRO'}
+          
+          <button onClick={toggleDevAdminRole} style={{ fontSize: 11, padding: '4px 8px', background: '#1e293b', border: '1px solid #334155', color: '#94a3b8', borderRadius: 4, cursor: 'pointer' }}>
+            [Dev: Toggle Admin]
           </button>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setDashView('terminal')} style={{ background: dashView === 'terminal' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'terminal' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Terminal</button>
+            <button onClick={() => setDashView('billing')} style={{ background: dashView === 'billing' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'billing' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Billing</button>
+            {isAdmin && <button onClick={() => setDashView('admin')} style={{ background: dashView === 'admin' ? 'rgba(99,102,241,0.2)' : 'transparent', color: dashView === 'admin' ? '#818cf8' : '#6366f1', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Admin</button>}
+          </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,0.03)', padding: '6px 16px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.05)' }}>
-              <User style={{ width: 14, height: 14, color: '#94a3b8' }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', maxWidth: isMobile ? 80 : 'auto', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || 'Guest'}</span>
-            </div>
             <button onClick={() => signOut(auth)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
               <LogOut style={{ width: 14, height: 14 }} /> {!isMobile && 'Logout'}
             </button>
@@ -634,152 +786,385 @@ function DashboardCore({ user }) {
         </div>
       </nav>
 
-      {/* ─── MAIN BENTO GRID ─── */}
-      <div style={{ maxWidth: 1600, margin: '0 auto', padding: isMobile ? '16px' : '24px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
-        
-        {/* LEFT COLUMN */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', minWidth: 0 }}>
+      {/* ─── TERMINAL VIEW ─── */}
+      {dashView === 'terminal' && (
+        <div style={{ maxWidth: 1600, margin: '0 auto', padding: isMobile ? '16px' : '24px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
           
-          {/* Chart Card */}
-          <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', overflow: 'hidden', display: 'flex', flexDirection: 'column', width: '100%' }}>
-            <div style={{ padding: isMobile ? '16px' : '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 12 : 0 }}>
-              <div>
-                <h1 style={{ fontSize: isMobile ? 24 : 28, fontWeight: 900, color: '#fff', margin: '0 0 8px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
-                  {sym} <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: 6 }}>M15 MAP</span>
-                </h1>
-                <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
-                  <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>HTF BIAS</span> <span style={{ color: biasCl, fontWeight: 800 }}>{data.htf_bias}</span></div>
-                  <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>STRUCTURE</span> <span style={{ color: '#cbd5e1', fontWeight: 800 }}>{data.m15_structure}</span></div>
-                </div>
-              </div>
-              <div style={{ textAlign: isMobile ? 'left' : 'right' }}>
-                <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 4 }}>LIVE PRICE</div>
-                <div style={{ fontSize: isMobile ? 24 : 28, fontFamily: 'monospace', fontWeight: 800, color: '#38bdf8' }}>{priceStr}</div>
-              </div>
-            </div>
-
-            <div style={{ height: isMobile ? 350 : 500, width: '100%', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 10, fontSize: 10, color: '#64748b', background: 'rgba(15,23,42,0.8)', padding: '4px 8px', borderRadius: 6 }}>
-                💡 Pinch/Scroll to zoom | Drag X to pan | Drag Y to stretch
-              </div>
-              <StructuralChart data={data} symbol={sym} isMobile={isMobile} />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
-              {[{l: 'True ATR', v: Number(data.atr).toFixed(5), c: '#f59e0b'}, {l: 'Bull TL', v: data.bull_tl?.valid ? 'Active' : 'Invalid', c: data.bull_tl?.valid ? '#10b981' : '#475569'}, {l: 'Bear TL', v: data.bear_tl?.valid ? 'Active' : 'Invalid', c: data.bear_tl?.valid ? '#f43f5e' : '#475569'}].map((s, i) => (
-                <div key={i} style={{ padding: '16px 24px', borderRight: (!isMobile && i < 2) ? '1px solid rgba(255,255,255,0.03)' : 'none', borderBottom: (isMobile && i < 2) ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
-                  <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 4 }}>{s.l}</div>
-                  <div style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 700, color: s.c }}>{s.v}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Algorithmic Signal Card (PAYWALLED) */}
-          <div style={{ position: 'relative', background: '#0f172a', borderRadius: 20, border: `1px solid ${isSubscribed ? (isHold ? 'rgba(255,255,255,0.05)' : isBuy ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)') : 'rgba(255,255,255,0.05)'}`, boxShadow: isHold || !isSubscribed ? '0 10px 40px rgba(0,0,0,0.2)' : (isBuy ? '0 10px 40px rgba(16,185,129,0.1)' : '0 10px 40px rgba(244,63,94,0.1)'), overflow: 'hidden' }}>
-            {!isSubscribed && paywallOverlay}
-            
-            {(!isHold && isSubscribed) && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: `linear-gradient(90deg, transparent, ${sigClr}, transparent)` }} />}
-            
-            <div style={{ padding: isMobile ? 24 : 32 }}>
-              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 16 : 0, marginBottom: 24 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', minWidth: 0 }}>
+            {/* Chart Card */}
+            <div style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', overflow: 'hidden', display: 'flex', flexDirection: 'column', width: '100%' }}>
+              <div style={{ padding: isMobile ? '16px' : '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 12 : 0 }}>
                 <div>
-                  <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Algorithmic Decision</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {!isHold && <Zap style={{ width: isMobile ? 24 : 28, height: isMobile ? 24 : 28, color: sigClr }} />}
-                    <span style={{ fontSize: isMobile ? 32 : 42, fontWeight: 900, color: sigClr, letterSpacing: '-0.02em', lineHeight: 1 }}>{data.signal.decision}</span>
+                  <h1 style={{ fontSize: isMobile ? 24 : 28, fontWeight: 900, color: '#fff', margin: '0 0 8px 0', letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {sym} <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: 6 }}>M15 MAP</span>
+                  </h1>
+                  <div style={{ display: 'flex', gap: 20, fontSize: 12 }}>
+                    <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>HTF BIAS</span> <span style={{ color: biasCl, fontWeight: 800 }}>{data.htf_bias}</span></div>
+                    <div style={{ display: 'flex', gap: 6 }}><span style={{ color: '#64748b', fontWeight: 600 }}>STRUCTURE</span> <span style={{ color: '#cbd5e1', fontWeight: 800 }}>{data.m15_structure}</span></div>
                   </div>
                 </div>
                 <div style={{ textAlign: isMobile ? 'left' : 'right' }}>
-                  <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Confluence Score</div>
-                  <div style={{ fontSize: isMobile ? 32 : 42, fontWeight: 900, color: data.signal.score >= 70 ? '#10b981' : '#f59e0b', lineHeight: 1 }}>
-                    {data.signal.score}<span style={{ fontSize: 20, color: '#475569' }}> /100</span>
-                  </div>
+                  <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, letterSpacing: '0.1em', marginBottom: 4 }}>LIVE PRICE</div>
+                  <div style={{ fontSize: isMobile ? 24 : 28, fontFamily: 'monospace', fontWeight: 800, color: '#38bdf8' }}>{priceStr}</div>
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                {[{ l: 'Detected Regime', v: data.signal.regime }, { l: 'Execution Zone', v: data.signal.location }].map(({ l, v }) => (
-                  <div key={l} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '16px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                    <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 6 }}>{l}</div>
-                    <div style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{v}</div>
+              <div style={{ height: isMobile ? 350 : 500, width: '100%', position: 'relative' }}>
+                <div style={{ position: 'absolute', top: 12, left: 16, zIndex: 10, fontSize: 10, color: '#64748b', background: 'rgba(15,23,42,0.8)', padding: '4px 8px', borderRadius: 6 }}>
+                  💡 Pinch/Scroll to zoom | Drag X to pan | Drag Y to stretch
+                </div>
+                <StructuralChart data={data} symbol={sym} isMobile={isMobile} />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', background: 'rgba(0,0,0,0.2)', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+                {[{l: 'True ATR', v: Number(data.atr).toFixed(5), c: '#f59e0b'}, {l: 'Bull TL', v: data.bull_tl?.valid ? 'Active' : 'Invalid', c: data.bull_tl?.valid ? '#10b981' : '#475569'}, {l: 'Bear TL', v: data.bear_tl?.valid ? 'Active' : 'Invalid', c: data.bear_tl?.valid ? '#f43f5e' : '#475569'}].map((s, i) => (
+                  <div key={i} style={{ padding: '16px 24px', borderRight: (!isMobile && i < 2) ? '1px solid rgba(255,255,255,0.03)' : 'none', borderBottom: (isMobile && i < 2) ? '1px solid rgba(255,255,255,0.03)' : 'none' }}>
+                    <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 4 }}>{s.l}</div>
+                    <div style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 700, color: s.c }}>{s.v}</div>
                   </div>
                 ))}
               </div>
+            </div>
 
-              <div style={{ background: 'rgba(56,189,248,0.05)', borderRadius: 12, padding: '20px', border: '1px solid rgba(56,189,248,0.1)' }}>
-                <div style={{ fontSize: 11, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Target style={{ width: 14, height: 14 }} /> AI Analyst Thesis
+            {/* Algorithmic Signal Card (PAYWALLED) */}
+            <div style={{ position: 'relative', background: '#0f172a', borderRadius: 20, border: `1px solid ${hasProAccess ? (isHold ? 'rgba(255,255,255,0.05)' : isBuy ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)') : 'rgba(255,255,255,0.05)'}`, boxShadow: isHold || !hasProAccess ? '0 10px 40px rgba(0,0,0,0.2)' : (isBuy ? '0 10px 40px rgba(16,185,129,0.1)' : '0 10px 40px rgba(244,63,94,0.1)'), overflow: 'hidden' }}>
+              {!hasProAccess && paywallOverlay}
+              
+              {(!isHold && hasProAccess) && <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: `linear-gradient(90deg, transparent, ${sigClr}, transparent)` }} />}
+              
+              <div style={{ padding: isMobile ? 24 : 32 }}>
+                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? 16 : 0, marginBottom: 24 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Algorithmic Decision</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      {!isHold && <Zap style={{ width: isMobile ? 24 : 28, height: isMobile ? 24 : 28, color: sigClr }} />}
+                      <span style={{ fontSize: isMobile ? 32 : 42, fontWeight: 900, color: sigClr, letterSpacing: '-0.02em', lineHeight: 1 }}>{data.signal.decision}</span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: isMobile ? 'left' : 'right' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 8 }}>Confluence Score</div>
+                    <div style={{ fontSize: isMobile ? 32 : 42, fontWeight: 900, color: data.signal.score >= 70 ? '#10b981' : '#f59e0b', lineHeight: 1 }}>
+                      {data.signal.score}<span style={{ fontSize: 20, color: '#475569' }}> /100</span>
+                    </div>
+                  </div>
                 </div>
-                <p style={{ fontFamily: 'monospace', fontSize: 13, color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>{data.signal.thesis}</p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginBottom: 16 }}>
+                  {[{ l: 'Detected Regime', v: data.signal.regime }, { l: 'Execution Zone', v: data.signal.location }].map(({ l, v }) => (
+                    <div key={l} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '16px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                      <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 6 }}>{l}</div>
+                      <div style={{ fontFamily: 'monospace', fontSize: 13, color: '#e2e8f0', fontWeight: 600 }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ background: 'rgba(56,189,248,0.05)', borderRadius: 12, padding: '20px', border: '1px solid rgba(56,189,248,0.1)' }}>
+                  <div style={{ fontSize: 11, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Target style={{ width: 14, height: 14 }} /> AI Analyst Thesis
+                  </div>
+                  <p style={{ fontFamily: 'monospace', fontSize: 13, color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>{data.signal.thesis}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column Order Flow */}
+          <div style={{ position: isMobile ? 'relative' : 'sticky', top: isMobile ? 0 : 84, background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', height: isMobile ? 'auto' : 'calc(100vh - 110px)', overflow: 'hidden', width: '100%' }}>
+            {!hasProAccess && paywallOverlay}
+            
+            <div style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <h2 style={{ fontSize: 16, fontWeight: 800, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Crosshair style={{ width: 18, height: 18, color: '#38bdf8' }} /> Live Order Flow
+              </h2>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+              <div style={{ marginBottom: 32 }}>
+                <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Active Positions</div>
+                {!data.positions?.length ? (
+                  <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center', color: '#64748b', fontSize: 13, fontStyle: 'italic' }}>
+                    No active trades for {sym}.
+                  </div>
+                ) : data.positions.map((pos, i) => {
+                  const lng = pos.type === 'LONG';
+                  return (
+                    <div key={i} style={{ borderRadius: 16, border: `1px solid ${lng ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`, background: lng ? 'rgba(16,185,129,0.05)' : 'rgba(244,63,94,0.05)', padding: 16, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <span style={{ fontWeight: 800, fontSize: 15, color: lng ? '#10b981' : '#f43f5e' }}>{pos.type} <span style={{ fontWeight: 500, fontSize: 12, opacity: 0.6 }}>({pos.volume}L)</span></span>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 16, color: pos.pnl >= 0 ? '#10b981' : '#f43f5e' }}>{pos.pnl >= 0 ? '+' : ''}{Number(pos.pnl || 0).toFixed(2)}</span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12, fontFamily: 'monospace', background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 8 }}>
+                        <div><span style={{ display: 'block', fontSize: 10, color: '#64748b', textTransform: 'uppercase', marginBottom: 2 }}>Entry</span><span style={{ color: '#cbd5e1' }}>{pos.open_price}</span></div>
+                        <div><span style={{ display: 'block', fontSize: 10, color: '#38bdf8', textTransform: 'uppercase', marginBottom: 2 }}>Target</span><span style={{ color: '#cbd5e1' }}>{pos.tp}</span></div>
+                        <div style={{ gridColumn: '1/-1', paddingTop: 8, marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)' }}><span style={{ color: pos.sl ? '#10b981' : '#f43f5e', fontSize: 12 }}>{pos.sl ? '🛡 SL Locked: ' : '⚠ Open SL  '}{pos.sl || '—'}</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div>
+                <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Pending Limits</div>
+                {!data.orders?.length ? (
+                  <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center', color: '#64748b', fontSize: 13, fontStyle: 'italic' }}>
+                    No resting limits.
+                  </div>
+                ) : data.orders.map((ord, i) => {
+                  const bl = ord.type?.includes('BUY');
+                  return (
+                    <div key={i} style={{ borderRadius: 16, border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)', padding: 16, marginBottom: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <span style={{ fontWeight: 800, fontSize: 14, color: bl ? '#10b981' : '#f43f5e' }}>⏳ {ord.type}</span>
+                        <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', padding: '4px 8px', borderRadius: 6 }}>{ord.volume}L</span>
+                      </div>
+                      <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#94a3b8' }}>
+                        {[['Limit', '#cbd5e1', ord.open_price], ['SL', '#f43f5e', ord.sl], ['TP', '#10b981', ord.tp]].map(([k, c, v]) => (
+                          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><span style={{ color: '#64748b' }}>{k}</span><span style={{ color: c }}>{v}</span></div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
         </div>
+      )}
 
-        {/* RIGHT COLUMN: ORDER FLOW (PAYWALLED) */}
-        <div style={{ position: isMobile ? 'relative' : 'sticky', top: isMobile ? 0 : 84, background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', boxShadow: '0 10px 40px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', height: isMobile ? 'auto' : 'calc(100vh - 110px)', overflow: 'hidden', width: '100%' }}>
-          {!isSubscribed && paywallOverlay}
-          
-          <div style={{ padding: '24px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-            <h2 style={{ fontSize: 16, fontWeight: 800, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Crosshair style={{ width: 18, height: 18, color: '#38bdf8' }} />
-              Live Order Flow
-            </h2>
+      {/* ─── BILLING VIEW ─── */}
+      {dashView === 'billing' && (
+        <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
+          <div style={{ textAlign: 'center', marginBottom: 48 }}>
+            <h1 style={{ fontSize: isMobile ? 28 : 36, fontWeight: 900, marginBottom: 16 }}>Choose Your Trading Edge</h1>
+            <p style={{ color: '#94a3b8', fontSize: 16, maxWidth: 600, margin: '0 auto' }}>Upgrade your license to unlock the full potential of the AlphaStructure engine directly on your dashboard.</p>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
-            <div style={{ marginBottom: 32 }}>
-              <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Active Positions</div>
-              {!data.positions?.length ? (
-                <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center', color: '#64748b', fontSize: 13, fontStyle: 'italic' }}>
-                  No active trades for {sym}.
-                </div>
-              ) : data.positions.map((pos, i) => {
-                const lng = pos.type === 'LONG';
-                return (
-                  <div key={i} style={{ borderRadius: 16, border: `1px solid ${lng ? 'rgba(16,185,129,0.3)' : 'rgba(244,63,94,0.3)'}`, background: lng ? 'rgba(16,185,129,0.05)' : 'rgba(244,63,94,0.05)', padding: 16, marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: lng ? '#10b981' : '#f43f5e' }}>{pos.type} <span style={{ fontWeight: 500, fontSize: 12, opacity: 0.6 }}>({pos.volume}L)</span></span>
-                      <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 16, color: pos.pnl >= 0 ? '#10b981' : '#f43f5e' }}>{pos.pnl >= 0 ? '+' : ''}{Number(pos.pnl || 0).toFixed(2)}</span>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 24 }}>
+            {plans.map(plan => {
+              const isActive = profile?.subscription?.plan === plan.id;
+              return (
+                <div key={plan.id} style={{ position: 'relative', background: '#0f172a', borderRadius: 24, padding: 32, border: `2px solid ${isActive ? plan.color : '#1e293b'}`, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  {isActive && (
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, background: plan.color, color: '#020617', fontSize: 12, fontWeight: 800, padding: '6px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                      Current Active Plan
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12, fontFamily: 'monospace', background: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 8 }}>
-                      <div><span style={{ display: 'block', fontSize: 10, color: '#64748b', textTransform: 'uppercase', marginBottom: 2 }}>Entry</span><span style={{ color: '#cbd5e1' }}>{pos.open_price}</span></div>
-                      <div><span style={{ display: 'block', fontSize: 10, color: '#38bdf8', textTransform: 'uppercase', marginBottom: 2 }}>Target</span><span style={{ color: '#cbd5e1' }}>{pos.tp}</span></div>
-                      <div style={{ gridColumn: '1/-1', paddingTop: 8, marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)' }}><span style={{ color: pos.sl ? '#10b981' : '#f43f5e', fontSize: 12 }}>{pos.sl ? '🛡 SL Locked: ' : '⚠ Open SL  '}{pos.sl || '—'}</span></div>
+                  )}
+                  {plan.discount && !isActive && (
+                    <div style={{ position: 'absolute', top: -1, right: -1, background: '#f59e0b', color: '#020617', fontSize: 12, fontWeight: 800, padding: '6px 16px', borderBottomLeftRadius: 16, textTransform: 'uppercase' }}>
+                      {plan.discount}
+                    </div>
+                  )}
+                  <h3 style={{ fontSize: 20, fontWeight: 800, color: '#fff', marginBottom: 8, marginTop: isActive ? 16 : 0 }}>{plan.name}</h3>
+                  <div style={{ marginBottom: 24, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                    <span style={{ fontSize: 36, fontWeight: 900, color: '#fff' }}>${plan.price}</span>
+                    <span style={{ color: '#64748b', fontWeight: 600 }}>/ {plan.interval}</span>
+                  </div>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 32px 0', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {plan.features.map((f, i) => (
+                      <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 14, color: '#cbd5e1', lineHeight: 1.4 }}>
+                        <CheckCircle2 style={{ width: 18, height: 18, color: plan.price === 0 ? '#475569' : '#10b981', flexShrink: 0, marginTop: 2 }} />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <button 
+                    disabled={isActive}
+                    onClick={() => setCheckoutPlan(plan)}
+                    style={{ 
+                      width: '100%', padding: '14px', borderRadius: 12, fontSize: 15, fontWeight: 700, border: 'none', 
+                      background: isActive ? '#1e293b' : plan.color, color: isActive ? '#64748b' : '#020617',
+                      cursor: isActive ? 'not-allowed' : 'pointer', transition: 'all 0.2s'
+                    }}
+                  >
+                    {isActive ? 'Active' : (plan.price === 0 ? 'Start Trial' : 'Subscribe Now')}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ─── ADMIN PANEL ─── */}
+      {dashView === 'admin' && isAdmin && (
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
+          <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', marginBottom: 32, gap: 16 }}>
+            <h1 style={{ fontSize: 24, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Shield style={{ width: 28, height: 28, color: '#6366f1' }} /> Admin Dashboard
+            </h1>
+            <div style={{ display: 'flex', gap: 8, background: '#0f172a', padding: 4, borderRadius: 12, border: '1px solid #1e293b' }}>
+              <button onClick={() => setAdminTab('users')} style={{ background: adminTab === 'users' ? '#1e293b' : 'transparent', color: adminTab === 'users' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>Users</button>
+              <button onClick={() => setAdminTab('plans')} style={{ background: adminTab === 'plans' ? '#1e293b' : 'transparent', color: adminTab === 'plans' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s' }}>Subscription Tiers</button>
+            </div>
+          </div>
+
+          {adminTab === 'users' && (
+            <div style={{ background: '#0f172a', borderRadius: 16, border: '1px solid #1e293b', overflow: 'hidden' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead style={{ background: '#020617', borderBottom: '1px solid #1e293b' }}>
+                    <tr>
+                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>User / ID</th>
+                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Role</th>
+                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Plan</th>
+                      <th style={{ padding: '16px 24px', fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>Joined</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allUsers.map(u => (
+                      <tr key={u.id} style={{ borderBottom: '1px solid #1e293b', background: u.role === 'admin' ? 'rgba(99,102,241,0.02)' : 'transparent' }}>
+                        <td style={{ padding: '16px 24px' }}>
+                          <div style={{ fontWeight: 600, color: '#e2e8f0' }}>{u.email}</div>
+                          <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#64748b', marginTop: 4 }}>{u.uid}</div>
+                        </td>
+                        <td style={{ padding: '16px 24px' }}>
+                          <select 
+                            value={u.role || 'customer'} 
+                            onChange={(e) => handleAdminUpdate(u.id, 'role', e.target.value)}
+                            disabled={u.id === user.uid}
+                            style={{ 
+                              background: u.role === 'admin' ? 'rgba(99,102,241,0.1)' : '#1e293b', 
+                              color: u.role === 'admin' ? '#818cf8' : '#94a3b8', 
+                              border: `1px solid ${u.role === 'admin' ? 'rgba(99,102,241,0.2)' : '#334155'}`, 
+                              borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: u.id === user.uid ? 'not-allowed' : 'pointer',
+                              appearance: 'none', WebkitAppearance: 'none'
+                            }}
+                          >
+                            <option value="customer" style={{ background: '#0f172a', color: '#fff' }}>Customer</option>
+                            <option value="admin" style={{ background: '#0f172a', color: '#fff' }}>Admin</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: '16px 24px' }}>
+                          <select 
+                            value={u.subscription?.plan || 'free'} 
+                            onChange={(e) => handleAdminUpdate(u.id, 'plan', e.target.value)}
+                            style={{ 
+                              background: '#1e293b', color: '#38bdf8', border: '1px solid #334155', 
+                              borderRadius: 6, padding: '6px 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', outline: 'none', cursor: 'pointer',
+                              appearance: 'none', WebkitAppearance: 'none'
+                            }}
+                          >
+                            {plans.map(p => (
+                              <option key={p.id} value={p.id} style={{ background: '#0f172a', color: '#fff' }}>{p.name} (${p.price})</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td style={{ padding: '16px 24px', fontSize: 13, color: '#94a3b8' }}>
+                          {new Date(u.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {adminTab === 'plans' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
+                {saveStatus && <span style={{ fontSize: 13, color: '#10b981', fontWeight: 600 }}>{saveStatus}</span>}
+                <button onClick={handleSavePlans} style={{ background: '#38bdf8', color: '#020617', padding: '10px 24px', borderRadius: 8, fontSize: 14, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Shield style={{ width: 16, height: 16 }} /> Save Active Plans
+                </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 24 }}>
+                {editablePlans.map((plan, i) => (
+                  <div key={i} style={{ background: '#0f172a', padding: 24, borderRadius: 16, border: `1px solid ${plan.color}40` }}>
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Plan Name</label>
+                      <input value={plan.name} onChange={e => handlePlanChange(i, 'name', e.target.value)} style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Price ($)</label>
+                        <input type="number" value={plan.price} onChange={e => handlePlanChange(i, 'price', Number(e.target.value))} style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, outline: 'none', boxSizing: 'border-box' }} />
+                      </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Interval</label>
+                        <input value={plan.interval} onChange={e => handlePlanChange(i, 'interval', e.target.value)} placeholder="e.g. Month" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, outline: 'none', boxSizing: 'border-box' }} />
+                      </div>
+                    </div>
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Discount Badge (Optional)</label>
+                      <input value={plan.discount || ''} onChange={e => handlePlanChange(i, 'discount', e.target.value)} placeholder="e.g. 15% OFF" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#f59e0b', fontSize: 14, fontWeight: 600, outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Features (One per line)</label>
+                      <textarea value={plan.features.join('\n')} onChange={e => handlePlanChange(i, 'features', e.target.value.split('\n'))} style={{ width: '100%', height: 120, background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#cbd5e1', fontSize: 13, lineHeight: 1.5, outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── STRIPE CHECKOUT MODAL ─── */}
+      {checkoutPlan && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', borderRadius: 24, border: '1px solid #1e293b', overflow: 'hidden', boxShadow: '0 25px 50px rgba(0,0,0,0.5)' }}>
+            
+            {/* Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid #1e293b', background: '#020617', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f8fafc', fontWeight: 700 }}>
+                <CreditCard style={{ width: 18, height: 18, color: '#38bdf8' }} /> Secure Checkout
+              </div>
+              <button onClick={() => !isProcessing && setCheckoutPlan(null)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+                <XCircle style={{ width: 20, height: 20 }} />
+              </button>
             </div>
 
-            <div>
-              <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Pending Limits</div>
-              {!data.orders?.length ? (
-                <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', textAlign: 'center', color: '#64748b', fontSize: 13, fontStyle: 'italic' }}>
-                  No resting limits.
+            <div style={{ padding: '24px' }}>
+              {paymentSuccess ? (
+                <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                  <div style={{ width: 64, height: 64, background: 'rgba(16,185,129,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px auto' }}>
+                    <CheckCircle2 style={{ width: 32, height: 32, color: '#10b981' }} />
+                  </div>
+                  <h3 style={{ fontSize: 24, fontWeight: 800, color: '#fff', marginBottom: 8 }}>Payment Successful!</h3>
+                  <p style={{ color: '#94a3b8', fontSize: 14 }}>Your account is now upgraded to <strong style={{ color: '#fff' }}>{checkoutPlan.name}</strong>.</p>
                 </div>
-              ) : data.orders.map((ord, i) => {
-                const bl = ord.type?.includes('BUY');
-                return (
-                  <div key={i} style={{ borderRadius: 16, border: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)', padding: 16, marginBottom: 12 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <span style={{ fontWeight: 800, fontSize: 14, color: bl ? '#10b981' : '#f43f5e' }}>⏳ {ord.type}</span>
-                      <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace', background: 'rgba(0,0,0,0.3)', padding: '4px 8px', borderRadius: 6 }}>{ord.volume}L</span>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                  <div style={{ background: '#020617', borderRadius: 12, padding: 16, border: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Subscribing to</div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>{checkoutPlan.name}</div>
                     </div>
-                    <div style={{ fontSize: 12, fontFamily: 'monospace', color: '#94a3b8' }}>
-                      {[['Limit', '#cbd5e1', ord.open_price], ['SL', '#f43f5e', ord.sl], ['TP', '#10b981', ord.tp]].map(([k, c, v]) => (
-                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><span style={{ color: '#64748b' }}>{k}</span><span style={{ color: c }}>{v}</span></div>
-                      ))}
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Total Due</div>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: '#fff' }}>${checkoutPlan.price}</div>
                     </div>
                   </div>
-                );
-              })}
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Card Information</label>
+                    <input disabled value="•••• •••• •••• 4242" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px 16px', borderRadius: 10, color: '#cbd5e1', fontSize: 15, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', marginBottom: 12 }} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <input disabled value="12 / 28" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px 16px', borderRadius: 10, color: '#cbd5e1', fontSize: 15, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                      <input disabled value="•••" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px 16px', borderRadius: 10, color: '#cbd5e1', fontSize: 15, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={handleSimulatePayment} 
+                    disabled={isProcessing}
+                    style={{ width: '100%', background: '#38bdf8', color: '#020617', padding: '16px', borderRadius: 12, fontSize: 16, fontWeight: 800, border: 'none', cursor: isProcessing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: isProcessing ? 0.7 : 1 }}
+                  >
+                    {isProcessing ? <Loader2 style={{ width: 20, height: 20, animation: 'spin 1s linear infinite' }} /> : `Pay $${checkoutPlan.price}.00`}
+                  </button>
+
+                  <div style={{ textAlign: 'center', fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <Shield style={{ width: 12, height: 12 }} /> Payments processed securely via Simulated Stripe
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
+      )}
 
-      </div>
     </div>
   );
 }
