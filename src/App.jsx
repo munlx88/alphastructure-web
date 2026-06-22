@@ -31,7 +31,7 @@ const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = 'default-app-id'; // Hardcoded for production Vercel builds
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 // ─── Seeded RNG + 200 Candle Generator ────────────────────────────────────────
 function seededRng(seed) {
