@@ -6,10 +6,10 @@ import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarCh
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(false); // Safe default for SSR/Build
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
-    handleResize();
+    handleResize(); // Set correct value after mount on the client
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -99,10 +99,11 @@ function buildSim(sym) {
 const SIM = Object.fromEntries(Object.keys(SCFG).map(s => [s, buildSim(s)]));
 
 // ─── Subscriptions & Plans ───────────────────────────────────────────────────
+// Added stripePriceId for Production Integration
 const DEFAULT_PLANS = [
-  { id: 'free', name: '7-Day Free Trial', price: 0, interval: '7 Days', features: ['Access to daily bias', 'End of day reports', 'Community access'], color: '#334155' },
-  { id: 'monthly', name: 'Alpha Pro (Monthly)', price: 20, interval: 'Month', features: ['Live Engine Telemetry', 'M15/H1 Execution Signals', 'Advanced Trade Management', 'Discord VIP'], color: '#38bdf8' },
-  { id: 'quarterly', name: 'Alpha Pro (Quarterly)', price: 51, interval: '3 Months', discount: '15% OFF', features: ['All Monthly Features', 'Unrestricted Desktop .exe', 'Auto-Trade Execution', '1-on-1 Support'], color: '#10b981' }
+  { id: 'free', name: '7-Day Free Trial', price: 0, interval: '7 Days', stripePriceId: '', features: ['Access to daily bias', 'End of day reports', 'Community access'], color: '#334155' },
+  { id: 'monthly', name: 'Alpha Pro (Monthly)', price: 20, interval: 'Month', stripePriceId: 'price_abc123', features: ['Live Engine Telemetry', 'M15/H1 Execution Signals', 'Advanced Trade Management', 'Discord VIP'], color: '#38bdf8' },
+  { id: 'quarterly', name: 'Alpha Pro (Quarterly)', price: 51, interval: '3 Months', stripePriceId: 'price_xyz789', discount: '15% OFF', features: ['All Monthly Features', 'Unrestricted Desktop .exe', 'Auto-Trade Execution', '1-on-1 Support'], color: '#10b981' }
 ];
 
 // ─── Interactive Pure HTML5 Canvas Chart ──────────────────────────────────────
@@ -551,10 +552,9 @@ function DashboardCore({ user }) {
   const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
   const [notification, setNotification] = useState({ show: false, msg: '', type: 'info' });
 
-  // Stripe Simulation State
+  // Stripe Processing State
   const [checkoutPlan, setCheckoutPlan] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
 
   const showNotification = (msg, type = 'info') => {
     setNotification({ show: true, msg, type });
@@ -564,6 +564,15 @@ function DashboardCore({ user }) {
   // Sync Profile & Market Data
   useEffect(() => {
     if (!db || !user) return;
+
+    // Detect Stripe redirect return
+    if (window.location.search.includes('payment=success')) {
+      showNotification('Payment Successful! Welcome to Pro.', 'success');
+      window.history.replaceState(null, '', window.location.pathname);
+    } else if (window.location.search.includes('payment=cancelled')) {
+      showNotification('Checkout was cancelled.', 'error');
+      window.history.replaceState(null, '', window.location.pathname);
+    }
 
     // ── SET FALLBACK PROFILE IMMEDIATELY ──────────────────────────────────────
     const fallbackProfile = {
@@ -628,7 +637,9 @@ function DashboardCore({ user }) {
     const stripeRef = doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'stripe');
     const unsubStripe = onSnapshot(stripeRef, (docSnap) => {
        if (docSnap.exists()) setStripeKeys(docSnap.data());
-    }, (error) => console.warn("Stripe read blocked (Expected for non-admins):", error.code));
+    }, (error) => {
+        // Only ignore if missing permissions, which is standard for non-admins
+    });
     
     return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); };
   }, [user]);
@@ -679,7 +690,7 @@ function DashboardCore({ user }) {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', mockUser.uid), mockUser);
       showNotification('Mock user generated successfully!', 'success');
     } catch (err) {
-      showNotification(`Failed: Update your Firebase rules to allow writes to 'artifacts/'.`, 'error');
+      showNotification(`Failed: Update your Firebase rules to allow writes.`, 'error');
     }
   };
 
@@ -719,27 +730,45 @@ function DashboardCore({ user }) {
     }
   };
 
-  // Stripe Simulation Logic
-  const handleSimulatePayment = () => {
+  // REAL PRODUCTION STRIPE LOGIC (Requires Firebase Stripe Extension or Cloud Function)
+  const handleRealStripeCheckout = async () => {
+    if (!checkoutPlan || !checkoutPlan.stripePriceId) {
+        showNotification('Plan is missing a valid Stripe Price ID.', 'error');
+        setIsProcessing(false);
+        return;
+    }
+    
     setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      setPaymentSuccess(true);
-      
-      if (user && profile && db) {
-        const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
-        setDoc(profileRef, {
-          ...profile,
-          subscription: { plan: checkoutPlan.id, status: 'active', since: new Date().toISOString() }
-        }, { merge: true }).catch(e => console.error("Error upgrading plan", e));
-      }
+    
+    try {
+        // This is the standard path pattern for the "Run Payments with Stripe" Firebase Extension
+        const sessionRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid, 'checkout_sessions'));
+        
+        await setDoc(sessionRef, {
+            price: checkoutPlan.stripePriceId,
+            success_url: window.location.origin + '?payment=success',
+            cancel_url: window.location.origin + '?payment=cancelled',
+        });
 
-      setTimeout(() => {
-        setPaymentSuccess(false);
-        setCheckoutPlan(null);
-        setDashView('terminal');
-      }, 2000);
-    }, 2500);
+        // Listen for the backend (Extension) to create the URL and write it back
+        const unsub = onSnapshot(sessionRef, (snap) => {
+            const data = snap.data();
+            if (data?.error) {
+                showNotification(data.error.message, 'error');
+                setIsProcessing(false);
+                unsub();
+            }
+            if (data?.url) {
+                // Backend successfully generated checkout, redirect user to Stripe
+                window.location.assign(data.url);
+                unsub();
+            }
+        });
+    } catch (err) {
+        console.error(err);
+        setIsProcessing(false);
+        showNotification('Checkout failed to initialize. Are your rules set?', 'error');
+    }
   };
 
   const toggleDevAdminRole = () => {
@@ -869,6 +898,7 @@ function DashboardCore({ user }) {
       </nav>
 
       {/* ─── TERMINAL VIEW ─── */}
+      {}
       {dashView === 'terminal' && (
         <div style={{ maxWidth: 1600, margin: '0 auto', padding: isMobile ? '16px' : '24px', display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 380px', gap: '24px', alignItems: 'start' }}>
           
@@ -1013,16 +1043,18 @@ function DashboardCore({ user }) {
         </div>
       )}
 
+      {}
       {/* ─── BILLING VIEW ─── */}
       {dashView === 'billing' && (
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
           
+          {/* Admin Banner */}
           {isAdmin && (
             <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#10b981' }}>
               <Shield style={{ width: 24, height: 24 }} />
               <div>
                 <h3 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 4px 0' }}>Administrator Access Active</h3>
-                <p style={{ margin: 0, fontSize: 13, color: '#a7f3d0' }}>Your account bypasses all paywalls. You can test the subscription flows below, but your terminal is already fully unlocked.</p>
+                <p style={{ margin: 0, fontSize: 13, color: '#a7f3d0' }}>Your account bypasses all paywalls automatically. You can review the subscription tiers below.</p>
               </div>
             </div>
           )}
@@ -1062,7 +1094,14 @@ function DashboardCore({ user }) {
                   </ul>
                   <button 
                     disabled={isActive}
-                    onClick={() => setCheckoutPlan(plan)}
+                    onClick={() => {
+                        setCheckoutPlan(plan);
+                        if (plan.price === 0) {
+                            // Free trial skips stripe
+                            handleAdminUpdate(user.uid, 'plan', plan.id);
+                            setDashView('terminal');
+                        }
+                    }}
                     style={{ 
                       width: '100%', padding: '14px', borderRadius: 12, fontSize: 15, fontWeight: 700, border: 'none', 
                       background: isActive ? '#1e293b' : plan.color, color: isActive ? '#64748b' : '#020617',
@@ -1079,6 +1118,7 @@ function DashboardCore({ user }) {
       )}
 
       {/* ─── ADMIN PANEL ─── */}
+      {}
       {dashView === 'admin' && isAdmin && (
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
           <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', marginBottom: 32, gap: 16 }}>
@@ -1180,7 +1220,8 @@ function DashboardCore({ user }) {
 
           {adminTab === 'plans' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 16 }}>
+                {saveStatus && <span style={{ fontSize: 13, color: '#10b981', fontWeight: 600 }}>{saveStatus}</span>}
                 <button onClick={handleSavePlans} style={{ background: '#38bdf8', color: '#020617', padding: '10px 24px', borderRadius: 8, fontSize: 14, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Shield style={{ width: 16, height: 16 }} /> Save Active Plans
                 </button>
@@ -1201,6 +1242,10 @@ function DashboardCore({ user }) {
                         <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Interval</label>
                         <input value={plan.interval} onChange={e => handlePlanChange(i, 'interval', e.target.value)} placeholder="e.g. Month" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#fff', fontSize: 14, fontWeight: 600, outline: 'none', boxSizing: 'border-box' }} />
                       </div>
+                    </div>
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Stripe Price ID</label>
+                      <input value={plan.stripePriceId || ''} onChange={e => handlePlanChange(i, 'stripePriceId', e.target.value)} placeholder="e.g. price_1234..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '10px', borderRadius: 8, color: '#10b981', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
                     </div>
                     <div style={{ marginBottom: 16 }}>
                       <label style={{ display: 'block', fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Discount Badge (Optional)</label>
@@ -1261,7 +1306,7 @@ function DashboardCore({ user }) {
         </div>
       )}
 
-      {/* ─── STRIPE CHECKOUT MODAL ─── */}
+      {/* ─── REAL STRIPE REDIRECT MODAL ─── */}
       {checkoutPlan && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div style={{ width: '100%', maxWidth: 420, background: '#0f172a', borderRadius: 24, border: '1px solid #1e293b', overflow: 'hidden', boxShadow: '0 25px 50px rgba(0,0,0,0.5)' }}>
@@ -1276,13 +1321,11 @@ function DashboardCore({ user }) {
             </div>
 
             <div style={{ padding: '24px' }}>
-              {paymentSuccess ? (
-                <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                  <div style={{ width: 64, height: 64, background: 'rgba(16,185,129,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px auto' }}>
-                    <CheckCircle style={{ width: 32, height: 32, color: '#10b981' }} />
-                  </div>
-                  <h3 style={{ fontSize: 24, fontWeight: 800, color: '#fff', marginBottom: 8 }}>Payment Successful!</h3>
-                  <p style={{ color: '#94a3b8', fontSize: 14 }}>Your account is now upgraded to <strong style={{ color: '#fff' }}>{checkoutPlan.name}</strong>.</p>
+              {isProcessing ? (
+                <div style={{ textAlign: 'center', padding: '32px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                    <Loader style={{ width: 48, height: 48, color: '#38bdf8', animation: 'spin 1.5s linear infinite' }} />
+                    <div style={{ color: '#fff', fontSize: 16, fontWeight: 600 }}>Connecting to Stripe...</div>
+                    <div style={{ color: '#64748b', fontSize: 13 }}>Please wait while we generate your secure checkout URL.</div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -1297,25 +1340,15 @@ function DashboardCore({ user }) {
                     </div>
                   </div>
 
-                  <div>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Card Information</label>
-                    <input disabled value="•••• •••• •••• 4242" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px 16px', borderRadius: 10, color: '#cbd5e1', fontSize: 15, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', marginBottom: 12 }} />
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <input disabled value="12 / 28" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px 16px', borderRadius: 10, color: '#cbd5e1', fontSize: 15, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
-                      <input disabled value="•••" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px 16px', borderRadius: 10, color: '#cbd5e1', fontSize: 15, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
-                    </div>
-                  </div>
-
                   <button 
-                    onClick={handleSimulatePayment} 
-                    disabled={isProcessing}
-                    style={{ width: '100%', background: '#38bdf8', color: '#020617', padding: '16px', borderRadius: 12, fontSize: 16, fontWeight: 800, border: 'none', cursor: isProcessing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: isProcessing ? 0.7 : 1 }}
+                    onClick={handleRealStripeCheckout} 
+                    style={{ width: '100%', background: '#38bdf8', color: '#020617', padding: '16px', borderRadius: 12, fontSize: 16, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
                   >
-                    {isProcessing ? <Loader style={{ width: 20, height: 20, animation: 'spin 1s linear infinite' }} /> : `Pay $${checkoutPlan.price}.00`}
+                    Proceed to Payment
                   </button>
 
                   <div style={{ textAlign: 'center', fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    <Shield style={{ width: 12, height: 12 }} /> Payments processed securely via Simulated Stripe
+                    <Shield style={{ width: 12, height: 12 }} /> You will be redirected to Stripe.com
                   </div>
                 </div>
               )}
@@ -1402,6 +1435,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
+    // 1. Initialize Firebase Auth Flow safely inside useEffect
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
