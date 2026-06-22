@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, Crown, CheckCircle2, XCircle, Loader2, Settings, Trash2 } from 'lucide-react';
+import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc } from 'firebase/firestore';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously } from 'firebase/auth';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -16,9 +16,7 @@ const useIsMobile = () => {
 };
 
 // ─── Firebase Setup ───────────────────────────────────────────────────────────
-// Using environment variables if provided, otherwise falling back to defaults.
-const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
-const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {
+const firebaseConfig = {
   apiKey: "AIzaSyCnDzXhHDmfx5SAYcS0hNIuZhA2Lt1C3QA",
   authDomain: "auth.alphastructure.io",
   projectId: "alphastructure",
@@ -30,7 +28,7 @@ const firebaseConfig = firebaseConfigStr ? JSON.parse(firebaseConfigStr) : {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = 'default-app-id'; // Hardcoded for production Vercel builds
 
 // ─── Seeded RNG + 200 Candle Generator ────────────────────────────────────────
 function seededRng(seed) {
@@ -1266,17 +1264,12 @@ export default function App() {
     // 1. Initialize Firebase Auth Flow safely inside useEffect
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          // If no custom token exists, use anonymous auth to prevent permissions errors
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth init error:", err);
       }
     };
-    initAuth();
+    // initAuth(); // Only uncomment if you want forced anonymous login
 
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
