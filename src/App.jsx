@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously } from 'firebase/auth';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -981,7 +981,7 @@ function DashboardCore({ user }) {
                   <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 32px 0', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {plan.features.map((f, i) => (
                       <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 14, color: '#cbd5e1', lineHeight: 1.4 }}>
-                        <CheckCircle2 style={{ width: 18, height: 18, color: plan.price === 0 ? '#475569' : '#10b981', flexShrink: 0, marginTop: 2 }} />
+                        <CheckCircle style={{ width: 18, height: 18, color: plan.price === 0 ? '#475569' : '#10b981', flexShrink: 0, marginTop: 2 }} />
                         {f}
                       </li>
                     ))}
@@ -1139,7 +1139,7 @@ function DashboardCore({ user }) {
               {paymentSuccess ? (
                 <div style={{ textAlign: 'center', padding: '32px 0' }}>
                   <div style={{ width: 64, height: 64, background: 'rgba(16,185,129,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px auto' }}>
-                    <CheckCircle2 style={{ width: 32, height: 32, color: '#10b981' }} />
+                    <CheckCircle style={{ width: 32, height: 32, color: '#10b981' }} />
                   </div>
                   <h3 style={{ fontSize: 24, fontWeight: 800, color: '#fff', marginBottom: 8 }}>Payment Successful!</h3>
                   <p style={{ color: '#94a3b8', fontSize: 14 }}>Your account is now upgraded to <strong style={{ color: '#fff' }}>{checkoutPlan.name}</strong>.</p>
@@ -1171,7 +1171,7 @@ function DashboardCore({ user }) {
                     disabled={isProcessing}
                     style={{ width: '100%', background: '#38bdf8', color: '#020617', padding: '16px', borderRadius: 12, fontSize: 16, fontWeight: 800, border: 'none', cursor: isProcessing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, opacity: isProcessing ? 0.7 : 1 }}
                   >
-                    {isProcessing ? <Loader2 style={{ width: 20, height: 20, animation: 'spin 1s linear infinite' }} /> : `Pay $${checkoutPlan.price}.00`}
+                    {isProcessing ? <Loader style={{ width: 20, height: 20, animation: 'spin 1s linear infinite' }} /> : `Pay $${checkoutPlan.price}.00`}
                   </button>
 
                   <div style={{ textAlign: 'center', fontSize: 11, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
