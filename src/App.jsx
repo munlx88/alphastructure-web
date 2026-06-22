@@ -573,7 +573,7 @@ function DashboardCore({ user }) {
     setProfile(prev => prev || fallbackProfile);
     
     // 1. Fetch User Profile
-    const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
+    const profileRef = doc(db, 'users', user.uid);
     const unsubProfile = onSnapshot(profileRef, (docSnap) => {
       if (docSnap.exists()) {
         setProfile(docSnap.data());
@@ -587,7 +587,7 @@ function DashboardCore({ user }) {
     });
 
     // 2. Fetch Subscription Plans Config
-    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans');
+    const configRef = doc(db, 'config', 'subscription_plans');
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists() && docSnap.data().plans) {
         setPlans(docSnap.data().plans);
@@ -601,10 +601,11 @@ function DashboardCore({ user }) {
     });
 
     // 3. Fetch Market Data (From Python Engine)
-    const unsubMarket = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'market_data'), snap => {
+    const unsubMarket = onSnapshot(collection(db, 'market_data'), snap => {
       const nd = {};
       let hasData = false;
       snap.forEach(document => {
+        if (document.id === 'subscription_plans') return; 
         const d = document.data();
         if (d.price !== undefined) {
              hasData = true;
@@ -626,20 +627,24 @@ function DashboardCore({ user }) {
         setConnected(false);
     });
     
-    return () => { unsubProfile(); unsubMarket(); unsubConfig(); };
-  }, [user]);
+    // 4. Fetch All Users for Admin Panel
+    const allProfilesRef = collection(db, 'users');
+    const unsubAll = onSnapshot(allProfilesRef, (snapshot) => {
+      const usersList = [];
+      snapshot.forEach((d) => usersList.push({ id: d.id, ...d.data() }));
+      usersList.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setAllUsers(usersList);
+    }, (error) => {
+      console.warn("All-users read blocked (expected for non-admins):", error.code);
+    });
 
-  // Separate effect to handle admin user list securely
-  useEffect(() => {
-    if (profile && profile.role === 'admin') {
-         setAllUsers([{ id: user.uid, ...profile }]);
-    }
-  }, [profile, user.uid]);
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubAll(); };
+  }, [user]);
 
   // Admin Management Logic
   const handleAdminUpdate = async (uid, field, value) => {
     if (!db || profile?.role !== 'admin') return;
-    const userRef = doc(db, 'artifacts', appId, 'users', uid, 'profile', 'main');
+    const userRef = doc(db, 'users', uid);
     try {
       if (field === 'role') {
         await updateDoc(userRef, { role: value });
@@ -664,7 +669,7 @@ function DashboardCore({ user }) {
     if (!db || profile?.role !== 'admin') return;
     setSaveStatus('Saving...');
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'subscription_plans'), { plans: editablePlans });
+      await setDoc(doc(db, 'config', 'subscription_plans'), { plans: editablePlans });
       setSaveStatus('Saved successfully!');
       setTimeout(() => setSaveStatus(''), 2000);
     } catch (err) {
@@ -681,7 +686,7 @@ function DashboardCore({ user }) {
       setPaymentSuccess(true);
       
       if (user && profile && db) {
-        const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
+        const profileRef = doc(db, 'users', user.uid);
         setDoc(profileRef, {
           ...profile,
           subscription: {
@@ -702,7 +707,7 @@ function DashboardCore({ user }) {
 
   const toggleDevAdminRole = () => {
     if (user && profile && db) {
-      const profileRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'main');
+      const profileRef = doc(db, 'users', user.uid);
       setDoc(profileRef, {
         ...profile,
         role: profile.role === 'admin' ? 'customer' : 'admin'
@@ -1372,3 +1377,14 @@ export default function App() {
             </button>
           </form>
         </div>
+
+        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 13, color: '#64748b' }}>
+          {isLoginMode ? 'Need an account?' : 'Already have an account?'}
+          <button onClick={() => setIsLoginMode(!isLoginMode)} style={{ background: 'none', border: 'none', color: '#38bdf8', fontWeight: 700, cursor: 'pointer', padding: '0 0 0 6px' }}>
+            {isLoginMode ? 'Register' : 'Sign In'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
