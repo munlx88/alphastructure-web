@@ -111,7 +111,7 @@ const InfoModal = ({ type, onClose }) => {
   let title = '', content = null;
   if (type === 'about') {
     title = 'About AlphaStructure';
-    content = <p style={{color: '#94a3b8', lineHeight: 1.6}}>AlphaStructure is a quantitative research and trading technology firm. We specialize in institutional-grade market structure analysis, combining Python-based algorithmic engines with real-time web telemetry to give retail traders a professional edge.</p>;
+    content = <p style={{color: '#94a3b8', lineHeight: 1.6}}>AlphaStructure is an institutional-grade quantitative research and trading technology firm developed by <strong>Moontrex Fx Academy</strong>. We specialize in market structure analysis, combining Python-based algorithmic engines with real-time web telemetry to give retail traders a professional edge.</p>;
   } else if (type === 'contact') {
     title = 'Contact Us';
     content = <p style={{color: '#94a3b8', lineHeight: 1.6}}>For premium support, license inquiries, or technical assistance, please email us at <strong>support@alphastructure.io</strong> or reach out via our private Discord server available to Pro members.</p>;
@@ -138,7 +138,7 @@ const SharedFooter = ({ onOpenInfo }) => (
       <button onClick={() => onOpenInfo('contact')} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'color 0.2s' }}>Contact Us</button>
       <button onClick={() => onOpenInfo('disclaimer')} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'color 0.2s' }}>Risk Disclaimer</button>
     </div>
-    <div style={{ color: '#475569', fontSize: 12 }}>© {new Date().getFullYear()} AlphaStructure.io. All rights reserved.</div>
+    <div style={{ color: '#475569', fontSize: 12 }}>© {new Date().getFullYear()} AlphaStructure.io. Developed by <strong>Moontrex Fx Academy</strong>. All rights reserved.</div>
   </footer>
 );
 
