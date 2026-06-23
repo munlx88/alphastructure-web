@@ -722,10 +722,21 @@ function DashboardCore({ user, onOpenInfo }) {
         const payRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', uid, 'payments'), 'admin_manual_pay');
         
         if (value === 'desk_pro' || value === 'web_pro') {
-            await setDoc(subRef, { status: 'active', role: value, cancel_at_period_end: false });
+            await setDoc(subRef, { 
+                status: 'active', 
+                role: value, 
+                stripeRole: value,
+                items: [{ price: { metadata: { firebaseRole: value } } }],
+                cancel_at_period_end: false 
+            });
             await deleteDoc(payRef).catch(() => {});
         } else if (value === 'lifetime') {
-            await setDoc(payRef, { status: 'succeeded', amount: 49900 });
+            await setDoc(payRef, { 
+                status: 'succeeded', 
+                role: 'lifetime',
+                items: [{ price: { metadata: { firebaseRole: 'lifetime' } } }],
+                amount: 49900 
+            });
             await deleteDoc(subRef).catch(() => {});
         } else {
             await deleteDoc(subRef).catch(() => {});
