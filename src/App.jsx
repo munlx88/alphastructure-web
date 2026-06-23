@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus } from 'lucide-react';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, sendPasswordResetEmail, deleteUser } from 'firebase/auth';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus, Settings } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
-  const [isMobile, setIsMobile] = useState(false); // Safe default for SSR/Build
+  const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 1024);
-    handleResize(); // Set correct value after mount on the client
+    handleResize(); 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -98,8 +98,6 @@ function buildSim(sym) {
 }
 const SIM = Object.fromEntries(Object.keys(SCFG).map(s => [s, buildSim(s)]));
 
-// ─── Subscriptions & Plans ───────────────────────────────────────────────────
-// Added stripePriceId for Production Integration
 const DEFAULT_PLANS = [
   { id: 'web_pro', name: 'Alpha Web Pro (Monthly)', price: 20, interval: 'Month', stripePriceId: '', features: ['Live Engine Telemetry', 'M15/H1 Execution Signals', 'Advanced Trade Management', 'Discord VIP'], color: '#38bdf8' },
   { id: 'desk_pro', name: 'Alpha Desk Premium (Monthly)', price: 51, interval: 'Month', stripePriceId: '', features: ['All Web Features', 'Unrestricted Desktop .exe', 'Auto-Trade Execution', '1-on-1 Support'], color: '#10b981' },
@@ -147,7 +145,6 @@ const SharedFooter = ({ onOpenInfo }) => (
 const StructuralChart = ({ data, symbol, isMobile }) => {
   const wrapRef   = useRef(null);
   const canvasRef = useRef(null);
-  
   const panRef = useRef(0);
   const zoomRef = useRef(50);
   const mouseRef = useRef(null);
@@ -170,9 +167,7 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
 
     const TW  = wrapRef.current.clientWidth;
     const TH  = wrapRef.current.clientHeight;
-    const VH  = 60;   
-    const XH  = 24;   
-    const GAP = 8;
+    const VH  = 60, XH  = 24, GAP = 8;
     const MH  = TH - VH - XH - GAP;  
     
     const ml = 10, mr = isMobile ? 55 : 80, mt = 20;
@@ -201,13 +196,10 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
     const rawMin = Math.min(...cpx, ...lpx);
     const rawMax = Math.max(...cpx, ...lpx);
     const rawRange = (rawMax - rawMin) || 1;
-    
-    const autoMin = rawMin - rawRange * 0.05;
-    const autoMax = rawMax + rawRange * 0.05;
+    const autoMin = rawMin - rawRange * 0.05, autoMax = rawMax + rawRange * 0.05;
     
     const midY = (autoMax + autoMin) / 2;
     const stretchedRange = (autoMax - autoMin) * yStretchRef.current;
-    
     const yMin = midY - stretchedRange / 2 + yOffsetRef.current;
     const yMax = midY + stretchedRange / 2 + yOffsetRef.current;
 
@@ -242,7 +234,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
         const date = new Date(c.t * 1000);
         const timeStr = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
         ctx.fillText(timeStr, xMid(i), TH - (XH / 2));
-        
         ctx.beginPath(); ctx.moveTo(xMid(i), mt); ctx.lineTo(xMid(i), TH - XH); 
         ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.stroke();
       }
@@ -280,26 +271,16 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
     const drawTL = (tl, color) => {
       if (!tl?.valid || !tl.pts?.length) return;
       const pt1 = tl.pts[0];
-      const ts1 = pt1.ts ?? pt1.t;
-      const p1 = pt1.price ?? pt1.p;
-      const x1 = getXFromTime(ts1);
-      const y1 = yOf(p1);
+      const x1 = getXFromTime(pt1.ts ?? pt1.t);
+      const y1 = yOf(pt1.price ?? pt1.p);
       const x2 = getXFromTime(totalCandles[totalCandles.length - 1].t);
-      const y2 = yOf(tl.projected_price || p1);
+      const y2 = yOf(tl.projected_price || (pt1.price ?? pt1.p));
 
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
-      ctx.globalAlpha = 0.8;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
+      ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.globalAlpha = 0.8;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
       ctx.restore();
     };
-    drawTL(data.bear_tl, '#f43f5e'); 
-    drawTL(data.bull_tl, '#10b981'); 
+    drawTL(data.bear_tl, '#f43f5e'); drawTL(data.bull_tl, '#10b981'); 
 
     candles.forEach((c, i) => {
       const bull = c.c >= c.o, col = bull ? '#10b981' : '#f43f5e';
@@ -312,29 +293,21 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
 
     const mark = (pts, isHigh) => {
       (pts || []).forEach(s => {
-        const ts = s.t ?? s.ts;
-        const px = s.p ?? s.price;
+        const ts = s.t ?? s.ts, px = s.p ?? s.price;
         if (!ts || !px) return;
-        const x = getXFromTime(ts);
-        const y = yOf(px);
+        const x = getXFromTime(ts), y = yOf(px);
         if (x >= ml - 20 && x <= ml + W + 20 && y >= mt - 20 && y <= mt + MH + 20) {
-          ctx.fillStyle = isHigh ? '#f472b6' : '#22d3ee';
-          ctx.font = '14px monospace';
-          ctx.textAlign = 'center';
+          ctx.fillStyle = isHigh ? '#f472b6' : '#22d3ee'; ctx.font = '14px monospace'; ctx.textAlign = 'center';
           ctx.fillText(isHigh ? '▼' : '▲', x, y + (isHigh ? -14 : 14));
         }
       });
     };
-    mark(data.swing_highs, true);
-    mark(data.swing_lows, false);
+    mark(data.swing_highs, true); mark(data.swing_lows, false);
 
     if (currentPan === 0 && data.price && data.price >= yMin && data.price <= yMax) {
       const py = yOf(data.price);
-      ctx.save();
-      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]); ctx.globalAlpha = 0.8;
-      ctx.beginPath(); ctx.moveTo(ml, py); ctx.lineTo(ml + W, py); ctx.stroke();
-      ctx.setLineDash([]); ctx.globalAlpha = 1;
-      
+      ctx.save(); ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 1; ctx.setLineDash([2, 4]); ctx.globalAlpha = 0.8;
+      ctx.beginPath(); ctx.moveTo(ml, py); ctx.lineTo(ml + W, py); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
       const pStr = data.price > 999 ? data.price.toFixed(2) : data.price.toFixed(5);
       ctx.fillStyle = '#0369a1'; ctx.beginPath(); ctx.roundRect(ml + W + 4, py - 10, mr - 8, 20, 4); ctx.fill();
       ctx.fillStyle = '#bae6fd'; ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left'; ctx.fillText(pStr, ml + W + 8, py);
@@ -368,7 +341,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
         if (candles[cIndex]) {
           const hoverC = candles[cIndex];
           const hoverPrice = yMin + ((mt + MH - y) / MH) * (yMax - yMin);
-          
           ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.roundRect(ml + W + 4, y - 10, mr - 8, 20, 4); ctx.fill();
           ctx.fillStyle = '#f8fafc'; ctx.fillText(hoverPrice > 999 ? hoverPrice.toFixed(2) : hoverPrice.toFixed(5), ml + W + 8, y);
           
@@ -469,7 +441,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
         initialZoom.current = zoomRef.current;
         return;
       }
-
       if (e.touches.length === 1) {
         const now = Date.now();
         if (now - lastTap < 300) {
@@ -478,13 +449,11 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
           return;
         }
         lastTap = now;
-
         const touch = e.touches[0];
         const rect = cv.getBoundingClientRect();
         const mouseX = touch.clientX - rect.left;
         const TW = cv.clientWidth;
         const mr = isMobile ? 55 : 80;
-
         if (mouseX > TW - mr) {
           isDraggingY.current = true; dragStartY.current = touch.clientY; dragStartStretch.current = yStretchRef.current;
         } else {
@@ -504,12 +473,10 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
         requestAnimationFrame(draw);
         return;
       }
-
       if (e.touches.length === 1) {
         const touch = e.touches[0];
         const TW = cv.clientWidth;
         const mr = isMobile ? 55 : 80;
-
         if (isDraggingY.current) {
           if (e.cancelable) e.preventDefault();
           const dy = touch.clientY - dragStartY.current;
@@ -530,11 +497,7 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
       }
     };
 
-    const onTouchEnd = () => {
-      isDraggingX.current = false;
-      isDraggingY.current = false;
-      initialPinchDist.current = null;
-    };
+    const onTouchEnd = () => { isDraggingX.current = false; isDraggingY.current = false; initialPinchDist.current = null; };
 
     cv.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mouseup', onMouseUp); 
@@ -542,7 +505,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
     cv.addEventListener('mousemove', onMouseMove);
     cv.addEventListener('wheel', onWheel, { passive: false });
     cv.addEventListener('dblclick', onDoubleClick);
-
     cv.addEventListener('touchstart', onTouchStart, { passive: false });
     cv.addEventListener('touchmove', onTouchMove, { passive: false });
     cv.addEventListener('touchend', onTouchEnd);
@@ -555,7 +517,6 @@ const StructuralChart = ({ data, symbol, isMobile }) => {
       cv.removeEventListener('mousemove', onMouseMove);
       cv.removeEventListener('wheel', onWheel);
       cv.removeEventListener('dblclick', onDoubleClick);
-      
       cv.removeEventListener('touchstart', onTouchStart);
       cv.removeEventListener('touchmove', onTouchMove);
       cv.removeEventListener('touchend', onTouchEnd);
@@ -580,7 +541,7 @@ function DashboardCore({ user, onOpenInfo }) {
   // Account & Role Management State
   const [profile, setProfile] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
-  const [dashView, setDashView] = useState('terminal'); // 'terminal', 'billing', 'admin'
+  const [dashView, setDashView] = useState('terminal'); // 'terminal', 'billing', 'admin', 'account'
   
   // Dynamic Plans & Admin State
   const [plans, setPlans] = useState(DEFAULT_PLANS);
@@ -603,7 +564,6 @@ function DashboardCore({ user, onOpenInfo }) {
   useEffect(() => {
     if (!db || !user) return;
 
-    // Detect Stripe redirect return
     if (window.location.search.includes('payment=success')) {
       showNotification('Payment Successful! Welcome to Pro.', 'success');
       window.history.replaceState(null, '', window.location.pathname);
@@ -612,7 +572,6 @@ function DashboardCore({ user, onOpenInfo }) {
       window.history.replaceState(null, '', window.location.pathname);
     }
 
-    // ── SET FALLBACK PROFILE IMMEDIATELY ──────────────────────────────────────
     const fallbackProfile = {
       uid: user.uid,
       role: 'customer',
@@ -622,14 +581,13 @@ function DashboardCore({ user, onOpenInfo }) {
       createdAt: new Date().toISOString()
     };
     
-    setProfile(prev => prev || fallbackProfile);
-    
     // 1. Fetch User Profile
     const profileRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid);
     const unsubProfile = onSnapshot(profileRef, (docSnap) => {
       if (docSnap.exists()) {
         setProfile(docSnap.data());
       } else {
+        // Only write fallback if it's a completely new DB record
         setDoc(profileRef, fallbackProfile).catch(err => console.warn("Profile creation blocked:", err.code));
         setProfile(fallbackProfile);
       }
@@ -675,9 +633,7 @@ function DashboardCore({ user, onOpenInfo }) {
     const stripeRef = doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'stripe');
     const unsubStripe = onSnapshot(stripeRef, (docSnap) => {
        if (docSnap.exists()) setStripeKeys(docSnap.data());
-    }, (error) => {
-        // Only ignore if missing permissions, which is standard for non-admins
-    });
+    }, (error) => {});
 
     // 5. Fetch Client App Download Settings
     const appSettingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'app_settings');
@@ -691,7 +647,6 @@ function DashboardCore({ user, onOpenInfo }) {
   // Separate effect to handle admin user list securely
   useEffect(() => {
     if (!db || profile?.role !== 'admin') return;
-    
     const allProfilesRef = collection(db, 'artifacts', appId, 'public', 'data', 'profiles');
     const unsubAll = onSnapshot(allProfilesRef, (snapshot) => {
       const usersList = [];
@@ -701,11 +656,52 @@ function DashboardCore({ user, onOpenInfo }) {
     }, (error) => {
       console.warn("All-users read blocked (expected for non-admins):", error.code);
     });
-
     return () => unsubAll();
   }, [db, profile?.role]);
 
-  // Admin Management Logic
+  // ── USER ACCOUNT ACTIONS ──
+  const handlePasswordReset = async () => {
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      showNotification('Password reset email sent! Check your inbox.', 'success');
+    } catch (err) {
+      showNotification(err.message, 'error');
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!window.confirm("Are you sure you want to cancel your active subscription?")) return;
+    try {
+      const subRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid, 'subscriptions'), 'admin_manual_sub');
+      const payRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid, 'payments'), 'admin_manual_pay');
+      await deleteDoc(subRef).catch(() => {});
+      await deleteDoc(payRef).catch(() => {});
+      
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid), {
+        'subscription.plan': 'free'
+      });
+      showNotification('Subscription cancelled successfully.', 'success');
+    } catch (err) {
+      showNotification('Failed to cancel. Contact support.', 'error');
+    }
+  };
+
+  const handleDeleteMyAccount = async () => {
+    if (!window.confirm("WARNING: This will permanently delete your account, settings, and access. This cannot be undone. Continue?")) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid));
+      await deleteUser(user);
+      showNotification('Account deleted.', 'success');
+    } catch (err) {
+      if (err.code === 'auth/requires-recent-login') {
+        showNotification('Security requires a recent login. Please log out, log back in, and try again.', 'error');
+      } else {
+        showNotification(err.message, 'error');
+      }
+    }
+  };
+
+  // ── ADMIN MANAGEMENT ACTIONS ──
   const handleAdminUpdate = async (uid, field, value) => {
     if (!db || profile?.role !== 'admin') return;
     const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'profiles', uid);
@@ -713,11 +709,9 @@ function DashboardCore({ user, onOpenInfo }) {
       if (field === 'role') await updateDoc(userRef, { role: value });
       else if (field === 'status') await updateDoc(userRef, { status: value });
       else if (field === 'plan') {
-        // Update user's visual profile plan
         await updateDoc(userRef, { 'subscription.plan': value, 'subscription.since': new Date().toISOString() });
         
-        // MOCK STRIPE DATA FOR DESKTOP APP:
-        // The Desktop app checks the Stripe collections, so we must mock them for manual upgrades!
+        // Mock Stripe Data for Desktop App
         const subRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', uid, 'subscriptions'), 'admin_manual_sub');
         const payRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', uid, 'payments'), 'admin_manual_pay');
         
@@ -770,25 +764,17 @@ function DashboardCore({ user, onOpenInfo }) {
 
   const handleDeleteUser = async (uid) => {
     if (!db || profile?.role !== 'admin') return;
+    if (!window.confirm("Note: This deletes their database profile. To permanently delete their login credentials, the user must do it from their Account tab, or you must delete them in your Firebase Console. Continue?")) return;
     try {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'profiles', uid));
-      showNotification('User deleted successfully.', 'success');
+      showNotification('User profile deleted successfully.', 'success');
     } catch (err) {
       showNotification(`Delete Failed: Check Firebase security rules.`, 'error');
     }
   };
 
-  // ── NEW PLAN MANAGEMENT LOGIC ──
   const handleAddPlan = () => {
-    const newPlan = { 
-      id: `plan_${Date.now()}`, 
-      name: 'New Plan', 
-      price: 0, 
-      interval: 'Month', 
-      stripePriceId: '', 
-      features: ['New Feature 1'], 
-      color: '#38bdf8' 
-    };
+    const newPlan = { id: `plan_${Date.now()}`, name: 'New Plan', price: 0, interval: 'Month', stripePriceId: '', features: ['New Feature 1'], color: '#38bdf8' };
     setEditablePlans([...editablePlans, newPlan]);
   };
 
@@ -853,9 +839,7 @@ function DashboardCore({ user, onOpenInfo }) {
     setIsProcessing(true);
     
     try {
-        // This is the standard path pattern for the "Run Payments with Stripe" Firebase Extension
         const sessionRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid, 'checkout_sessions'));
-        
         await setDoc(sessionRef, {
             price: checkoutPlan.stripePriceId,
             success_url: window.location.origin + '?payment=success',
@@ -865,11 +849,10 @@ function DashboardCore({ user, onOpenInfo }) {
         // Fail-safe Timeout in case the Firebase Extension is misconfigured or asleep
         const timeoutId = setTimeout(() => {
             setIsProcessing(false);
-            showNotification('Extension timeout. Check Firebase Extension Config (Customers Path).', 'error');
+            showNotification('Extension timeout. Ensure Stripe Webhook has Cloud Function Invoker permissions.', 'error');
             unsub();
         }, 12000);
 
-        // Listen for the backend (Extension) to create the URL and write it back
         const unsub = onSnapshot(sessionRef, (snap) => {
             const data = snap.data();
             if (data?.error) {
@@ -880,7 +863,6 @@ function DashboardCore({ user, onOpenInfo }) {
             }
             if (data?.url) {
                 clearTimeout(timeoutId);
-                // Backend successfully generated checkout, redirect user to Stripe
                 window.location.assign(data.url);
                 unsub();
             }
@@ -906,7 +888,6 @@ if (profile?.status === 'suspended') {
     );
   }
 
-  // Safe data extraction to prevent loading screen freeze
   const safeMarketData = marketData || SIM;
   const currentSym = safeMarketData[sym] ? sym : Object.keys(safeMarketData)[0];
   const data = safeMarketData[currentSym];
@@ -994,16 +975,62 @@ if (profile?.status === 'suspended') {
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setDashView('terminal')} style={{ background: dashView === 'terminal' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'terminal' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Terminal</button>
           <button onClick={() => setDashView('billing')} style={{ background: dashView === 'billing' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'billing' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Billing</button>
-            {isAdmin && <button onClick={() => setDashView('admin')} style={{ background: dashView === 'admin' ? 'rgba(99,102,241,0.2)' : 'transparent', color: dashView === 'admin' ? '#818cf8' : '#6366f1', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Admin</button>}
+          {isAdmin && <button onClick={() => setDashView('admin')} style={{ background: dashView === 'admin' ? 'rgba(99,102,241,0.2)' : 'transparent', color: dashView === 'admin' ? '#818cf8' : '#6366f1', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Admin</button>}
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button onClick={() => setDashView('account')} style={{ display: 'flex', alignItems: 'center', gap: 6, background: dashView === 'account' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'account' ? '#fff' : '#94a3b8', border: '1px solid rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+              <User style={{ width: 14, height: 14 }} /> {!isMobile && 'Account'}
+            </button>
             <button onClick={() => signOut(auth)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.2)', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
               <LogOut style={{ width: 14, height: 14 }} /> {!isMobile && 'Logout'}
             </button>
           </div>
         </div>
       </nav>
+
+      {/* ─── ACCOUNT VIEW ─── */}
+      {dashView === 'account' && (
+        <div style={{ maxWidth: 800, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <User style={{ width: 28, height: 28, color: '#38bdf8' }} />
+            <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>My Account</h1>
+          </div>
+
+          <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid #1e293b', marginBottom: 24 }}>
+            <h3 style={{ fontSize: 14, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 20 }}>Profile Details</h3>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24 }}>
+              <div>
+                <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Email Address</div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#e2e8f0' }}>{user.email}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Unique App ID</div>
+                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#94a3b8' }}>{user.uid}</div>
+              </div>
+              <div style={{ gridColumn: '1 / -1', background: 'rgba(56, 189, 248, 0.05)', padding: 16, borderRadius: 12, border: '1px solid rgba(56, 189, 248, 0.1)' }}>
+                <div style={{ fontSize: 11, color: '#38bdf8', textTransform: 'uppercase', fontWeight: 700, marginBottom: 6 }}>Current Plan</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#fff', textTransform: 'uppercase' }}>
+                  {(profile?.subscription?.plan || 'Free Tier').replace('_', ' ')}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 16 }}>
+            <button onClick={handlePasswordReset} style={{ background: '#1e293b', color: '#fff', border: '1px solid #334155', padding: '14px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Key style={{ width: 16, height: 16 }} /> Reset Password
+            </button>
+            <button onClick={handleCancelSubscription} style={{ background: '#1e293b', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)', padding: '14px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Ban style={{ width: 16, height: 16 }} /> Cancel Subscription
+            </button>
+            <button onClick={handleDeleteMyAccount} style={{ background: 'rgba(244,63,94,0.1)', color: '#f43f5e', border: '1px solid rgba(244,63,94,0.3)', padding: '14px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <Trash2 style={{ width: 16, height: 16 }} /> Delete Account
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ─── TERMINAL VIEW ─── */}
       {dashView === 'terminal' && (
@@ -1168,12 +1195,10 @@ if (profile?.status === 'suspended') {
         </div>
       )}
 
-      {}
       {/* ─── BILLING VIEW ─── */}
       {dashView === 'billing' && (
         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
           
-          {/* Admin Banner */}
           {isAdmin && (
             <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#10b981' }}>
               <Shield style={{ width: 24, height: 24 }} />
@@ -1238,7 +1263,6 @@ if (profile?.status === 'suspended') {
       )}
 
       {/* ─── ADMIN PANEL ─── */}
-      {}
       {dashView === 'admin' && isAdmin && (
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
           <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', marginBottom: 32, gap: 16 }}>
@@ -1634,7 +1658,6 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    // 1. Initialize Firebase Auth Flow safely inside useEffect
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -1659,7 +1682,7 @@ export default function App() {
       if (u && view !== 'dashboard') setView('dashboard');
     });
     return () => unsub();
-  }, []); // Run ONCE on mount
+  }, []);
 
   const handleGoogleAuth = async () => {
     setAuthError('');
