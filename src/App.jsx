@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
+// import { Analytics } from '@vercel/analytics/react'; // Uncomment for production
+const Analytics = () => null; // Mock for preview environment
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, sendPasswordResetEmail, deleteUser } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -1789,11 +1791,12 @@ export default function App() {
     setView('auth');
   };
 
-  if (loading) return <div style={{ height: '100vh', background: '#020617' }} />;
+  if (loading) return <><Analytics /><div style={{ height: '100vh', background: '#020617' }} /></>;
 
   if (user && view === 'dashboard') {
     return (
       <>
+        <Analytics />
         <InfoModal type={infoType} onClose={() => setInfoType(null)} />
         <DashboardCore user={user} onOpenInfo={setInfoType} />
       </>
@@ -1803,6 +1806,7 @@ export default function App() {
   if (view === 'landing') {
     return (
       <>
+        <Analytics />
         <InfoModal type={infoType} onClose={() => setInfoType(null)} />
         <LandingPage onNavigate={navigateToAuth} onOpenInfo={setInfoType} />
       </>
@@ -1812,6 +1816,7 @@ export default function App() {
   // Auth View
   return (
     <div style={{ minHeight: '100vh', background: '#020617', display: 'flex', flexDirection: 'column', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <Analytics />
       <InfoModal type={infoType} onClose={() => setInfoType(null)} />
       
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, position: 'relative' }}>
