@@ -3,7 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, sendPasswordResetEmail, deleteUser } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus, Settings } from 'lucide-react';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus, Settings, Megaphone } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -546,10 +546,11 @@ function DashboardCore({ user, onOpenInfo }) {
   
   // Dynamic Plans & Admin State
   const [plans, setPlans] = useState(DEFAULT_PLANS);
-  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe', 'app_config'
+  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe', 'app_config', 'ads'
   const [editablePlans, setEditablePlans] = useState([]);
   const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
   const [appSettings, setAppSettings] = useState({ exeUrl: '', version: '1.0.0' });
+  const [adSettings, setAdSettings] = useState({ htmlCode: '', active: false });
   const [notification, setNotification] = useState({ show: false, msg: '', type: 'info' });
 
   // Stripe Processing State
@@ -654,7 +655,13 @@ function DashboardCore({ user, onOpenInfo }) {
       if (docSnap.exists()) setAppSettings(docSnap.data());
     }, (error) => console.warn("App settings read blocked:", error.code));
     
-    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); unsubAppSettings(); };
+    // 6. Fetch Ad Settings
+    const adsRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'ads');
+    const unsubAds = onSnapshot(adsRef, (docSnap) => {
+      if (docSnap.exists()) setAdSettings(docSnap.data());
+    }, (error) => console.warn("Ads read blocked:", error.code));
+    
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); unsubAppSettings(); unsubAds(); };
   }, [user]);
 
   // Separate effect to handle admin user list securely
@@ -836,6 +843,16 @@ function DashboardCore({ user, onOpenInfo }) {
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'app_settings'), appSettings);
       showNotification('App Download Links saved successfully!', 'success');
+    } catch (err) {
+      showNotification(`Save Failed: Check Firebase rules.`, 'error');
+    }
+  };
+
+  const handleSaveAds = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'config', 'ads'), adSettings);
+      showNotification('Ad settings saved successfully!', 'success');
     } catch (err) {
       showNotification(`Save Failed: Check Firebase rules.`, 'error');
     }
@@ -1201,6 +1218,13 @@ if (profile?.status === 'suspended') {
                   );
                 })}
               </div>
+
+              {adSettings.active && adSettings.htmlCode && (
+                <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid rgba(255,255,255,0.05)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700, marginBottom: 12 }}>Sponsored</div>
+                  <div dangerouslySetInnerHTML={{ __html: adSettings.htmlCode }} style={{ display: 'flex', justifyContent: 'center', width: '100%', overflow: 'hidden' }} />
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1285,6 +1309,7 @@ if (profile?.status === 'suspended') {
               <button onClick={() => setAdminTab('plans')} style={{ background: adminTab === 'plans' ? '#1e293b' : 'transparent', color: adminTab === 'plans' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Subscription Tiers</button>
               <button onClick={() => setAdminTab('stripe')} style={{ background: adminTab === 'stripe' ? '#1e293b' : 'transparent', color: adminTab === 'stripe' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Stripe Settings</button>
               <button onClick={() => setAdminTab('app_config')} style={{ background: adminTab === 'app_config' ? '#1e293b' : 'transparent', color: adminTab === 'app_config' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>App Downloads</button>
+              <button onClick={() => setAdminTab('ads')} style={{ background: adminTab === 'ads' ? '#1e293b' : 'transparent', color: adminTab === 'ads' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Ad Settings</button>
             </div>
           </div>
 
@@ -1498,6 +1523,38 @@ if (profile?.status === 'suspended') {
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button onClick={handleSaveAppSettings} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Save style={{ width: 18, height: 18 }} /> Save Download Links
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {adminTab === 'ads' && (
+            <div style={{ maxWidth: 800 }}>
+              <div style={{ background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#38bdf8' }}>
+                <Megaphone style={{ width: 24, height: 24, flexShrink: 0 }} />
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 4px 0' }}>Advertisement Management</h3>
+                  <p style={{ margin: 0, fontSize: 13, color: '#bae6fd', lineHeight: 1.5 }}>Paste the raw HTML or iframe code for the advertisement. This will be displayed to all users below the Live Order Flow.</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid #1e293b' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                  <label style={{ fontSize: 13, color: '#e2e8f0', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input type="checkbox" checked={adSettings.active} onChange={e => setAdSettings({...adSettings, active: e.target.checked})} style={{ width: 18, height: 18, cursor: 'pointer' }} />
+                    Enable Advertisements
+                  </label>
+                </div>
+
+                <div style={{ marginBottom: 32 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Raw HTML / Ad Code</label>
+                  <textarea value={adSettings.htmlCode} onChange={e => setAdSettings({...adSettings, htmlCode: e.target.value})} placeholder="<a href='...'><img src='...' /></a>" style={{ width: '100%', height: 200, background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#cbd5e1', fontSize: 13, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={handleSaveAds} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Save style={{ width: 18, height: 18 }} /> Save Ad Settings
                   </button>
                 </div>
               </div>
