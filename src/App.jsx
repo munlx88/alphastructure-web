@@ -971,7 +971,10 @@ if (profile?.status === 'suspended') {
         position: 'sticky', top: 0, zIndex: 50, gap: isMobile ? 12 : 0 
       }}>
         
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'center' : 'flex-start', gap: 12 }}>
+        <div 
+          onClick={() => setDashView('terminal')} 
+          style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'center' : 'flex-start', gap: 12, cursor: 'pointer' }}
+        >
           <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 20px rgba(56,189,248,0.2)' }}>
             <Activity style={{ width: 18, height: 18, color: '#020617' }} />
           </div>
@@ -1629,7 +1632,10 @@ function LandingPage({ onNavigate, onOpenInfo }) {
         @keyframes float-card { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
       `}</style>
       <nav style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', justifyContent: 'space-between', alignItems: 'center', padding: '20px 40px', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: isMobile ? 16 : 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div 
+          onClick={() => window.location.reload()} 
+          style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+        >
           <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #38bdf8, #10b981)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Activity style={{ width: 18, height: 18, color: '#020617' }} />
           </div>
