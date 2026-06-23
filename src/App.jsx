@@ -561,6 +561,18 @@ function DashboardCore({ user, onOpenInfo }) {
     setTimeout(() => setNotification({ show: false, msg: '', type: 'info' }), 4000);
   };
 
+  // Handle Safari/Browser Back Button clearing the stuck loading state
+  useEffect(() => {
+    const handlePageShow = (event) => {
+      if (event.persisted || performance.getEntriesByType("navigation")[0]?.type === "back_forward") {
+        setIsProcessing(false);
+        setCheckoutPlan(null);
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => window.removeEventListener('pageshow', handlePageShow);
+  }, []);
+
   // Sync Profile & Market Data
   useEffect(() => {
     if (!db || !user) return;
@@ -851,6 +863,14 @@ function DashboardCore({ user, onOpenInfo }) {
       });
       // Redirect user to Stripe hosted checkout page
       window.location.assign(result.data.url);
+      
+      // Clean up state in the background so if the user clicks "Back" in their browser, 
+      // the modal is already closed.
+      setTimeout(() => {
+          setIsProcessing(false);
+          setCheckoutPlan(null);
+      }, 1500);
+
     } catch (err) {
       console.error('Checkout error:', err);
       showNotification(
@@ -912,10 +932,14 @@ if (profile?.status === 'suspended') {
 
   return (
     <div style={{ minHeight: '100vh', background: '#020617', color: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif', overflowX: 'hidden' }}>
+      <style>{`
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      `}</style>
       
       {/* ─── TOAST NOTIFICATION SYSTEM ─── */}
       {notification.show && (
-        <div style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 9999, background: notification.type === 'success' ? 'rgba(16,185,129,0.9)' : 'rgba(244,63,94,0.9)', backdropFilter: 'blur(8px)', color: '#fff', padding: '16px 24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', border: `1px solid ${notification.type === 'success' ? '#34d399' : '#fda4af'}`, animation: 'slideUp 0.3s ease-out' }}>
+        <div style={{ position: 'fixed', bottom: 32, right: 32, zIndex: 9999, background: notification.type === 'success' ? 'rgba(16,185,129,0.9)' : 'rgba(244,63,94,0.9)', backdropFilter: 'blur(8px)', color: '#fff', padding: '16px 24px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', border: `1px solid ${notification.type === 'success' ? '#34d399' : '#fda4af'}`, animation: 'slideUp 0.3s ease-out forwards' }}>
           {notification.type === 'success' ? <CheckCircle style={{ width: 20, height: 20 }} /> : <XCircle style={{ width: 20, height: 20 }} />}
           <span style={{ fontSize: 14, fontWeight: 600 }}>{notification.msg}</span>
         </div>
@@ -1491,7 +1515,7 @@ if (profile?.status === 'suspended') {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#f8fafc', fontWeight: 700 }}>
                 <CreditCard style={{ width: 18, height: 18, color: '#38bdf8' }} /> Secure Checkout
               </div>
-              <button onClick={() => !isProcessing && setCheckoutPlan(null)} style={{ background: 'none', border: 'none', color: '#64748b', cursor: isProcessing ? 'not-allowed' : 'pointer' }}>
+              <button onClick={() => { setIsProcessing(false); setCheckoutPlan(null); }} style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', transition: 'color 0.2s' }}>
                 <XCircle style={{ width: 20, height: 20 }} />
               </button>
             </div>
