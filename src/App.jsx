@@ -712,7 +712,26 @@ function DashboardCore({ user, onOpenInfo }) {
     try {
       if (field === 'role') await updateDoc(userRef, { role: value });
       else if (field === 'status') await updateDoc(userRef, { status: value });
-      else if (field === 'plan') await updateDoc(userRef, { 'subscription.plan': value, 'subscription.since': new Date().toISOString() });
+      else if (field === 'plan') {
+        // Update user's visual profile plan
+        await updateDoc(userRef, { 'subscription.plan': value, 'subscription.since': new Date().toISOString() });
+        
+        // MOCK STRIPE DATA FOR DESKTOP APP:
+        // The Desktop app checks the Stripe collections, so we must mock them for manual upgrades!
+        const subRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', uid, 'subscriptions'), 'admin_manual_sub');
+        const payRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', uid, 'payments'), 'admin_manual_pay');
+        
+        if (value === 'desk_pro' || value === 'web_pro') {
+            await setDoc(subRef, { status: 'active', role: value, cancel_at_period_end: false });
+            await deleteDoc(payRef).catch(() => {});
+        } else if (value === 'lifetime') {
+            await setDoc(payRef, { status: 'succeeded', amount: 49900 });
+            await deleteDoc(subRef).catch(() => {});
+        } else {
+            await deleteDoc(subRef).catch(() => {});
+            await deleteDoc(payRef).catch(() => {});
+        }
+      }
       showNotification(`User updated successfully`, 'success');
     } catch (err) {
       showNotification(`Update Failed: Check your Firebase security rules.`, 'error');
@@ -832,26 +851,35 @@ function DashboardCore({ user, onOpenInfo }) {
             cancel_url: window.location.origin + '?payment=cancelled',
         });
 
+        // Fail-safe Timeout in case the Firebase Extension is misconfigured or asleep
+        const timeoutId = setTimeout(() => {
+            setIsProcessing(false);
+            showNotification('Extension timeout. Check Firebase Extension Config (Customers Path).', 'error');
+            unsub();
+        }, 12000);
+
         // Listen for the backend (Extension) to create the URL and write it back
         const unsub = onSnapshot(sessionRef, (snap) => {
             const data = snap.data();
             if (data?.error) {
+                clearTimeout(timeoutId);
                 showNotification(data.error.message, 'error');
                 setIsProcessing(false);
                 unsub();
             }
             if (data?.url) {
+                clearTimeout(timeoutId);
                 // Backend successfully generated checkout, redirect user to Stripe
-        window.location.assign(data.url);
-        unsub();
-      }
-    });
-  } catch (err) {
-    console.error(err);
-    setIsProcessing(false);
-    showNotification('Checkout failed to initialize. Are your rules set?', 'error');
-  }
-};
+                window.location.assign(data.url);
+                unsub();
+            }
+        });
+    } catch (err) {
+      console.error(err);
+      setIsProcessing(false);
+      showNotification('Checkout failed to initialize. Are your rules set?', 'error');
+    }
+  };
 
 // Suspension Screen Intercept
 if (profile?.status === 'suspended') {
