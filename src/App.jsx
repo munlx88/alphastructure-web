@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, sendPasswordResetEmail, deleteUser } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus, Settings } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
@@ -828,49 +829,35 @@ function DashboardCore({ user, onOpenInfo }) {
     }
   };
 
-  // REAL PRODUCTION STRIPE LOGIC (Requires Firebase Stripe Extension or Cloud Function)
+  // REAL PRODUCTION STRIPE LOGIC USING DIRECT CLOUD FUNCTIONS
   const handleRealStripeCheckout = async () => {
-    if (!checkoutPlan || !checkoutPlan.stripePriceId) {
-        showNotification('Plan is missing a valid Stripe Price ID.', 'error');
-        setIsProcessing(false);
-        return;
+    if (!checkoutPlan?.stripePriceId) {
+      showNotification(
+        'This plan has no Stripe Price ID. Go to Admin → Subscription Tiers and paste your price_... ID.',
+        'error'
+      );
+      return;
     }
-    
     setIsProcessing(true);
-    
     try {
-        const sessionRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'profiles', user.uid, 'checkout_sessions'));
-        await setDoc(sessionRef, {
-            price: checkoutPlan.stripePriceId,
-            success_url: window.location.origin + '?payment=success',
-            cancel_url: window.location.origin + '?payment=cancelled',
-        });
-
-        // Fail-safe Timeout in case the Firebase Extension is misconfigured or asleep
-        const timeoutId = setTimeout(() => {
-            setIsProcessing(false);
-            showNotification('Extension timeout. Ensure Stripe Webhook has Cloud Function Invoker permissions.', 'error');
-            unsub();
-        }, 12000);
-
-        const unsub = onSnapshot(sessionRef, (snap) => {
-            const data = snap.data();
-            if (data?.error) {
-                clearTimeout(timeoutId);
-                showNotification(data.error.message, 'error');
-                setIsProcessing(false);
-                unsub();
-            }
-            if (data?.url) {
-                clearTimeout(timeoutId);
-                window.location.assign(data.url);
-                unsub();
-            }
-        });
+      const funcs = getFunctions(app, 'europe-west1');
+      const createCheckout = httpsCallable(funcs, 'createStripeCheckout');
+      const result = await createCheckout({
+        priceId:    checkoutPlan.stripePriceId,
+        planId:     checkoutPlan.id,
+        mode:       checkoutPlan.interval === 'Once' ? 'payment' : 'subscription',
+        successUrl: `${window.location.origin}?payment=success`,
+        cancelUrl:  `${window.location.origin}?payment=cancelled`,
+      });
+      // Redirect user to Stripe hosted checkout page
+      window.location.assign(result.data.url);
     } catch (err) {
-      console.error(err);
+      console.error('Checkout error:', err);
+      showNotification(
+        err.message || 'Checkout failed. Please try again.',
+        'error'
+      );
       setIsProcessing(false);
-      showNotification('Checkout failed to initialize. Are your rules set?', 'error');
     }
   };
 
