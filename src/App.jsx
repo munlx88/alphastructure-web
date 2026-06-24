@@ -553,7 +553,7 @@ function DashboardCore({ user, onOpenInfo }) {
   const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
   const [appSettings, setAppSettings] = useState({ exeUrl: '', version: '1.0.0' });
   const [adSettings, setAdSettings] = useState({ htmlCode: '', active: false });
-  const [aiKeys, setAiKeys] = useState({ openRouterKey: '', aiModel: 'anthropic/claude-3.5-sonnet' });
+  const [aiKeys, setAiKeys] = useState({ openRouterKey: '', aiModel: 'anthropic/claude-3.5-sonnet', stockCount: 3, customInstructions: '' });
   
   const [stockIdeas, setStockIdeas] = useState([]);
   const [isGeneratingIdeas, setIsGeneratingIdeas] = useState(false);
@@ -680,7 +680,7 @@ function DashboardCore({ user, onOpenInfo }) {
     // 8. Fetch AI Config (Secure, Admin only)
     const aiRef = doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'ai');
     const unsubAi = onSnapshot(aiRef, (docSnap) => {
-       if (docSnap.exists()) setAiKeys(docSnap.data());
+       if (docSnap.exists()) setAiKeys({ ...aiKeys, ...docSnap.data() });
     }, (error) => {});
     
     return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); unsubAppSettings(); unsubAds(); unsubIdeas(); unsubAi(); };
@@ -1120,7 +1120,7 @@ if (profile?.status === 'suspended') {
 
           <div style={{ textAlign: 'center', marginBottom: 48 }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(234, 179, 8, 0.1)', color: '#facc15', padding: '6px 16px', borderRadius: 999, fontSize: 13, fontWeight: 700, marginBottom: 16, border: '1px solid rgba(234, 179, 8, 0.2)' }}>
-              <Bot style={{ width: 16, height: 16 }} /> Powered by Claude AI
+              <Bot style={{ width: 16, height: 16 }} /> Powered by AI
             </div>
             <h1 style={{ fontSize: isMobile ? 28 : 36, fontWeight: 900, marginBottom: 16 }}>Daily Stock Opportunities</h1>
             <p style={{ color: '#94a3b8', fontSize: 16, maxWidth: 600, margin: '0 auto' }}>Fundamental and narrative analysis curated daily by our AI analyst. Discover hidden gems and major institutional plays.</p>
@@ -1689,11 +1689,24 @@ if (profile?.status === 'suspended') {
                   <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>OpenRouter API Key</label>
                   <input type="password" value={aiKeys.openRouterKey || ''} onChange={e => setAiKeys({...aiKeys, openRouterKey: e.target.value})} placeholder="sk-or-v1-..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
                 </div>
-                <div style={{ marginBottom: 24 }}>
-                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Model ID</label>
-                  <input type="text" value={aiKeys.aiModel || ''} onChange={e => setAiKeys({...aiKeys, aiModel: e.target.value})} placeholder="anthropic/claude-3.5-sonnet" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#10b981', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
-                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>Examples: <code style={{color: '#94a3b8'}}>anthropic/claude-3.5-sonnet</code> or <code style={{color: '#94a3b8'}}>openai/gpt-4o</code></div>
+                
+                <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 16, marginBottom: 24 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Model ID</label>
+                    <input type="text" value={aiKeys.aiModel || ''} onChange={e => setAiKeys({...aiKeys, aiModel: e.target.value})} placeholder="anthropic/claude-3.5-sonnet" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#10b981', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>Examples: <code style={{color: '#94a3b8'}}>anthropic/claude-3.5-sonnet</code> or <code style={{color: '#94a3b8'}}>openai/gpt-4o</code></div>
+                  </div>
+                  <div style={{ width: isMobile ? '100%' : 120 }}>
+                    <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Output Count</label>
+                    <input type="number" min="1" max="10" value={aiKeys.stockCount || 3} onChange={e => setAiKeys({...aiKeys, stockCount: Number(e.target.value)})} style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#38bdf8', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                  </div>
                 </div>
+
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Custom AI Instructions (Sectors, Strategies, Filters)</label>
+                  <textarea value={aiKeys.customInstructions || ''} onChange={e => setAiKeys({...aiKeys, customInstructions: e.target.value})} placeholder="e.g., Focus entirely on mid-cap Biotech and Cybersecurity stocks with recent insider buying..." style={{ width: '100%', height: 80, background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#cbd5e1', fontSize: 13, outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
+                </div>
+
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button onClick={handleSaveAiKeys} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Save style={{ width: 18, height: 18 }} /> Save AI Configuration
