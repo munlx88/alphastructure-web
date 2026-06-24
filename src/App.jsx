@@ -5,7 +5,7 @@ const Analytics = () => null; // Mock for preview environment
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInAnonymously, signInWithCustomToken, sendPasswordResetEmail, deleteUser } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus, Settings, Megaphone } from 'lucide-react';
+import { Activity, Zap, Target, Crosshair, Lock, User, LogOut, CreditCard, BarChart2, Cpu, Shield, ArrowRight, CheckCircle, XCircle, Loader, UserPlus, Trash2, Ban, Unlock, Key, Save, Plus, Settings, Megaphone, Lightbulb, Bot } from 'lucide-react';
 
 // ─── Custom Responsive Hook ───────────────────────────────────────────────────
 const useIsMobile = () => {
@@ -544,15 +544,19 @@ function DashboardCore({ user, onOpenInfo }) {
   // Account & Role Management State
   const [profile, setProfile] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
-  const [dashView, setDashView] = useState('terminal'); // 'terminal', 'billing', 'admin', 'account'
+  const [dashView, setDashView] = useState('terminal'); // 'terminal', 'billing', 'admin', 'account', 'stock_ideas'
   
   // Dynamic Plans & Admin State
   const [plans, setPlans] = useState(DEFAULT_PLANS);
-  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe', 'app_config', 'ads'
+  const [adminTab, setAdminTab] = useState('users'); // 'users', 'plans', 'stripe', 'app_config', 'ads', 'ai_research'
   const [editablePlans, setEditablePlans] = useState([]);
   const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
   const [appSettings, setAppSettings] = useState({ exeUrl: '', version: '1.0.0' });
   const [adSettings, setAdSettings] = useState({ htmlCode: '', active: false });
+  const [aiKeys, setAiKeys] = useState({ openRouterKey: '', aiModel: 'anthropic/claude-3.5-sonnet' });
+  
+  const [stockIdeas, setStockIdeas] = useState([]);
+  const [isGeneratingIdeas, setIsGeneratingIdeas] = useState(false);
   const [notification, setNotification] = useState({ show: false, msg: '', type: 'info' });
 
   // Stripe Processing State
@@ -663,7 +667,23 @@ function DashboardCore({ user, onOpenInfo }) {
       if (docSnap.exists()) setAdSettings(docSnap.data());
     }, (error) => console.warn("Ads read blocked:", error.code));
     
-    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); unsubAppSettings(); unsubAds(); };
+    // 7. Fetch Stock Ideas
+    const ideasRef = collection(db, 'artifacts', appId, 'public', 'data', 'stock_ideas');
+    const unsubIdeas = onSnapshot(ideasRef, (snap) => {
+      const ideas = [];
+      snap.forEach(document => ideas.push({ id: document.id, ...document.data() }));
+      // Sort by newest first
+      ideas.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      setStockIdeas(ideas);
+    }, (error) => console.warn("Ideas read blocked:", error.code));
+
+    // 8. Fetch AI Config (Secure, Admin only)
+    const aiRef = doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'ai');
+    const unsubAi = onSnapshot(aiRef, (docSnap) => {
+       if (docSnap.exists()) setAiKeys(docSnap.data());
+    }, (error) => {});
+    
+    return () => { unsubProfile(); unsubMarket(); unsubConfig(); unsubStripe(); unsubAppSettings(); unsubAds(); unsubIdeas(); unsubAi(); };
   }, [user]);
 
   // Separate effect to handle admin user list securely
@@ -860,6 +880,32 @@ function DashboardCore({ user, onOpenInfo }) {
     }
   };
 
+  const handleSaveAiKeys = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'config', 'ai'), aiKeys);
+      showNotification('OpenRouter AI Configuration saved securely!', 'success');
+    } catch (err) {
+      showNotification(`AI Save Failed: Check Firebase rules.`, 'error');
+    }
+  };
+
+  // Trigger Claude API Backend Function
+  const handleTriggerClaude = async () => {
+    if (!db || profile?.role !== 'admin') return;
+    setIsGeneratingIdeas(true);
+    try {
+      const funcs = getFunctions(app, 'europe-west1'); // Adjust region if needed
+      const triggerAI = httpsCallable(funcs, 'triggerClaudeStockAnalysis');
+      await triggerAI();
+      showNotification('Claude analysis triggered! New ideas will appear shortly.', 'success');
+    } catch (err) {
+      console.error(err);
+      showNotification('Failed to trigger AI. Check Cloud Functions logs.', 'error');
+    }
+    setIsGeneratingIdeas(false);
+  };
+
   // REAL PRODUCTION STRIPE LOGIC USING DIRECT CLOUD FUNCTIONS
   const handleRealStripeCheckout = async () => {
     if (!checkoutPlan?.stripePriceId) {
@@ -1007,6 +1053,7 @@ if (profile?.status === 'suspended') {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'space-between' : 'flex-end', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => setDashView('terminal')} style={{ background: dashView === 'terminal' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'terminal' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Terminal</button>
+          <button onClick={() => setDashView('stock_ideas')} style={{ background: dashView === 'stock_ideas' ? 'rgba(234,179,8,0.1)' : 'transparent', color: dashView === 'stock_ideas' ? '#facc15' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}><Lightbulb style={{width: 14, height: 14}}/> Stock Ideas</button>
           <button onClick={() => setDashView('billing')} style={{ background: dashView === 'billing' ? 'rgba(255,255,255,0.1)' : 'transparent', color: dashView === 'billing' ? '#fff' : '#94a3b8', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Billing</button>
           {isAdmin && <button onClick={() => setDashView('admin')} style={{ background: dashView === 'admin' ? 'rgba(99,102,241,0.2)' : 'transparent', color: dashView === 'admin' ? '#818cf8' : '#6366f1', border: 'none', padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Admin</button>}
           </div>
@@ -1062,6 +1109,66 @@ if (profile?.status === 'suspended') {
               <Trash2 style={{ width: 16, height: 16 }} /> Delete Account
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ─── STOCK IDEAS VIEW ─── */}
+      {dashView === 'stock_ideas' && (
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: isMobile ? '24px 16px' : '48px 24px' }}>
+          
+          {!hasProAccess && paywallOverlay}
+
+          <div style={{ textAlign: 'center', marginBottom: 48 }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'rgba(234, 179, 8, 0.1)', color: '#facc15', padding: '6px 16px', borderRadius: 999, fontSize: 13, fontWeight: 700, marginBottom: 16, border: '1px solid rgba(234, 179, 8, 0.2)' }}>
+              <Bot style={{ width: 16, height: 16 }} /> Powered by Claude AI
+            </div>
+            <h1 style={{ fontSize: isMobile ? 28 : 36, fontWeight: 900, marginBottom: 16 }}>Daily Stock Opportunities</h1>
+            <p style={{ color: '#94a3b8', fontSize: 16, maxWidth: 600, margin: '0 auto' }}>Fundamental and narrative analysis curated daily by our AI analyst. Discover hidden gems and major institutional plays.</p>
+          </div>
+
+          {!stockIdeas.length ? (
+            <div style={{ textAlign: 'center', padding: '60px 20px', background: '#0f172a', borderRadius: 24, border: '1px dashed rgba(255,255,255,0.1)' }}>
+              <Lightbulb style={{ width: 48, height: 48, color: '#475569', margin: '0 auto 16px auto' }} />
+              <h3 style={{ color: '#fff', fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Awaiting Today's Scan</h3>
+              <p style={{ color: '#64748b', fontSize: 14 }}>The AI engine is currently scanning global markets. New ideas will appear here soon.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(350px, 1fr))', gap: 24 }}>
+              {stockIdeas.map((idea, idx) => (
+                <div key={idx} style={{ background: '#0f172a', borderRadius: 20, border: '1px solid rgba(255,255,255,0.05)', padding: 24, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                    <div>
+                      <h2 style={{ fontSize: 24, fontWeight: 900, color: '#fff', margin: '0 0 4px 0' }}>{idea.ticker || 'UNKNOWN'}</h2>
+                      <div style={{ fontSize: 13, color: '#94a3b8', fontWeight: 600 }}>{idea.companyName || 'Company Name'}</div>
+                    </div>
+                    <div style={{ background: idea.bias === 'BULLISH' ? 'rgba(16,185,129,0.1)' : idea.bias === 'BEARISH' ? 'rgba(244,63,94,0.1)' : 'rgba(255,255,255,0.1)', color: idea.bias === 'BULLISH' ? '#10b981' : idea.bias === 'BEARISH' ? '#f43f5e' : '#e2e8f0', border: `1px solid ${idea.bias === 'BULLISH' ? 'rgba(16,185,129,0.2)' : idea.bias === 'BEARISH' ? 'rgba(244,63,94,0.2)' : 'rgba(255,255,255,0.2)'}`, padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 800, letterSpacing: '0.05em' }}>
+                      {idea.bias || 'NEUTRAL'}
+                    </div>
+                  </div>
+                  
+                  <div style={{ flex: 1, marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 8 }}>AI Prediction & Analysis</div>
+                    <p style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.6, margin: 0 }}>{idea.analysis || 'Analysis text goes here...'}</p>
+                  </div>
+
+                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: 16, borderRadius: 12, borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Current Price</span>
+                      <span style={{ fontSize: 14, color: '#fff', fontWeight: 700, fontFamily: 'monospace' }}>${idea.currentPrice || '0.00'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Predicted Target</span>
+                      <span style={{ fontSize: 14, color: '#38bdf8', fontWeight: 700, fontFamily: 'monospace' }}>${idea.targetPrice || '0.00'}</span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ fontSize: 11, color: '#475569', textAlign: 'right', marginTop: 16 }}>
+                    Generated: {idea.timestamp ? new Date(idea.timestamp).toLocaleDateString() : 'Today'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1315,6 +1422,7 @@ if (profile?.status === 'suspended') {
               <button onClick={() => setAdminTab('stripe')} style={{ background: adminTab === 'stripe' ? '#1e293b' : 'transparent', color: adminTab === 'stripe' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Stripe Settings</button>
               <button onClick={() => setAdminTab('app_config')} style={{ background: adminTab === 'app_config' ? '#1e293b' : 'transparent', color: adminTab === 'app_config' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>App Downloads</button>
               <button onClick={() => setAdminTab('ads')} style={{ background: adminTab === 'ads' ? '#1e293b' : 'transparent', color: adminTab === 'ads' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>Ad Settings</button>
+              <button onClick={() => setAdminTab('ai_research')} style={{ background: adminTab === 'ai_research' ? '#1e293b' : 'transparent', color: adminTab === 'ai_research' ? '#fff' : '#64748b', border: 'none', padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>AI Research</button>
             </div>
           </div>
 
@@ -1565,6 +1673,53 @@ if (profile?.status === 'suspended') {
               </div>
             </div>
           )}
+
+          {adminTab === 'ai_research' && (
+            <div style={{ maxWidth: 800 }}>
+              <div style={{ background: 'rgba(234, 179, 8, 0.1)', border: '1px solid rgba(234, 179, 8, 0.2)', padding: '16px', borderRadius: '12px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px', color: '#facc15' }}>
+                <Bot style={{ width: 24, height: 24, flexShrink: 0 }} />
+                <div>
+                  <h3 style={{ fontSize: 14, fontWeight: 800, margin: '0 0 4px 0' }}>OpenRouter AI Integration</h3>
+                  <p style={{ margin: 0, fontSize: 13, color: '#fef08a', lineHeight: 1.5 }}>Trigger the backend Cloud Function to query OpenRouter models (Claude, GPT, etc.) for today's top stock setups.</p>
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid #1e293b', marginBottom: 24 }}>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>OpenRouter API Key</label>
+                  <input type="password" value={aiKeys.openRouterKey || ''} onChange={e => setAiKeys({...aiKeys, openRouterKey: e.target.value})} placeholder="sk-or-v1-..." style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#fff', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Model ID</label>
+                  <input type="text" value={aiKeys.aiModel || ''} onChange={e => setAiKeys({...aiKeys, aiModel: e.target.value})} placeholder="anthropic/claude-3.5-sonnet" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#10b981', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>Examples: <code style={{color: '#94a3b8'}}>anthropic/claude-3.5-sonnet</code> or <code style={{color: '#94a3b8'}}>openai/gpt-4o</code></div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={handleSaveAiKeys} style={{ background: '#38bdf8', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Save style={{ width: 18, height: 18 }} /> Save AI Configuration
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ background: '#0f172a', padding: 32, borderRadius: 20, border: '1px solid #1e293b', textAlign: 'center' }}>
+                <Lightbulb style={{ width: 48, height: 48, color: '#38bdf8', margin: '0 auto 16px auto' }} />
+                <h2 style={{ fontSize: 20, fontWeight: 800, color: '#fff', marginBottom: 12 }}>Generate Daily Stock Ideas</h2>
+                <p style={{ color: '#94a3b8', fontSize: 14, marginBottom: 32, maxWidth: 500, margin: '0 auto 32px auto' }}>
+                  Clicking this button invokes your Firebase Cloud Function (`triggerClaudeStockAnalysis`), which securely calls OpenRouter using your chosen model and pushes the results to the public database.
+                </p>
+                
+                <button 
+                  onClick={handleTriggerClaude} 
+                  disabled={isGeneratingIdeas}
+                  style={{ background: '#facc15', color: '#020617', padding: '14px 32px', borderRadius: 10, fontSize: 15, fontWeight: 800, border: 'none', cursor: isGeneratingIdeas ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, opacity: isGeneratingIdeas ? 0.7 : 1 }}
+                >
+                  {isGeneratingIdeas ? <Loader style={{ animation: 'spin 1.5s linear infinite' }} /> : <Zap />}
+                  {isGeneratingIdeas ? 'Scanning Markets...' : 'Run Daily AI Scan'}
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
