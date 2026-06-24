@@ -1162,23 +1162,23 @@ if (profile?.status === 'suspended') {
                         </div>
                         
                         <div style={{ flex: 1, marginBottom: 20 }}>
-                          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 8 }}>AI Prediction & Analysis</div>
-                          <p style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.6, margin: 0 }}>{idea.analysis || 'Analysis text goes here...'}</p>
-                        </div>
+                    <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, marginBottom: 8 }}>AI Prediction & Analysis</div>
+                    <p style={{ fontSize: 14, color: '#cbd5e1', lineHeight: 1.6, margin: 0 }}>{idea.analysis || 'Analysis text goes here...'}</p>
+                  </div>
 
-                        <div style={{ background: 'rgba(0,0,0,0.2)', padding: 16, borderRadius: 12, borderTop: '1px solid rgba(255,255,255,0.03)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Current Price</span>
-                            <span style={{ fontSize: 14, color: '#fff', fontWeight: 700, fontFamily: 'monospace' }}>${idea.currentPrice || '0.00'}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Predicted Target</span>
-                            <span style={{ fontSize: 14, color: '#38bdf8', fontWeight: 700, fontFamily: 'monospace' }}>${idea.targetPrice || '0.00'}</span>
-                          </div>
-                        </div>
-                        
-                        <div style={{ fontSize: 11, color: '#475569', textAlign: 'right', marginTop: 16 }}>
-                          Generated: {idea.timestamp ? new Date(idea.timestamp).toLocaleDateString() : 'Today'}
+                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: 16, borderRadius: 12, borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Current Price</span>
+                      <span style={{ fontSize: 14, color: '#fff', fontWeight: 700, fontFamily: 'monospace' }}>{idea.currentPrice ? `$${idea.currentPrice}` : 'MKT'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>Predicted Target</span>
+                      <span style={{ fontSize: 14, color: '#38bdf8', fontWeight: 700, fontFamily: 'monospace' }}>{idea.targetPrice ? `$${idea.targetPrice}` : 'TBD'}</span>
+                    </div>
+                  </div>
+                  
+                  <div style={{ fontSize: 11, color: '#475569', textAlign: 'right', marginTop: 16 }}>
+                    Generated: {idea.timestamp ? new Date(idea.timestamp).toLocaleDateString() : 'Today'}
                         </div>
                       </div>
                     ))}
