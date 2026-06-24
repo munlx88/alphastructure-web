@@ -1140,7 +1140,7 @@ if (profile?.status === 'suspended') {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                     <div>
                       <h2 style={{ fontSize: 24, fontWeight: 900, color: '#fff', margin: '0 0 4px 0' }}>{idea.ticker || 'UNKNOWN'}</h2>
-                      <div style={{ fontSize: 13, color: '#94a3b8', fontWeight: 600 }}>{idea.companyName || 'Company Name'}</div>
+                      <div style={{ fontSize: 13, color: '#94a3b8', fontWeight: 600 }}>{idea.assetName || idea.companyName || 'Asset Name'}</div>
                     </div>
                     <div style={{ background: idea.bias === 'BULLISH' ? 'rgba(16,185,129,0.1)' : idea.bias === 'BEARISH' ? 'rgba(244,63,94,0.1)' : 'rgba(255,255,255,0.1)', color: idea.bias === 'BULLISH' ? '#10b981' : idea.bias === 'BEARISH' ? '#f43f5e' : '#e2e8f0', border: `1px solid ${idea.bias === 'BULLISH' ? 'rgba(16,185,129,0.2)' : idea.bias === 'BEARISH' ? 'rgba(244,63,94,0.2)' : 'rgba(255,255,255,0.2)'}`, padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 800, letterSpacing: '0.05em' }}>
                       {idea.bias || 'NEUTRAL'}
