@@ -553,7 +553,8 @@ function DashboardCore({ user, onOpenInfo }) {
   const [stripeKeys, setStripeKeys] = useState({ pubKey: '', secretKey: '', webhook: '', mode: 'test' });
   const [appSettings, setAppSettings] = useState({ exeUrl: '', version: '1.0.0' });
   const [adSettings, setAdSettings] = useState({ htmlCode: '', active: false });
-  const [aiKeys, setAiKeys] = useState({ openRouterKey: '', aiModel: 'anthropic/claude-3.5-sonnet', stockCount: 3, customInstructions: '' });
+  // ADDED targetTickers to initial state
+  const [aiKeys, setAiKeys] = useState({ openRouterKey: '', aiModel: 'anthropic/claude-3.5-sonnet', stockCount: 3, customInstructions: '', targetTickers: '' });
   
   const [stockIdeas, setStockIdeas] = useState([]);
   const [isGeneratingIdeas, setIsGeneratingIdeas] = useState(false);
@@ -1700,6 +1701,13 @@ if (profile?.status === 'suspended') {
                     <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Output Count</label>
                     <input type="number" min="1" max="10" value={aiKeys.stockCount || 3} onChange={e => setAiKeys({...aiKeys, stockCount: Number(e.target.value)})} style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#38bdf8', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
                   </div>
+                </div>
+
+                {/* ADDED TARGET TICKERS INPUT */}
+                <div style={{ marginBottom: 24 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: '#64748b', textTransform: 'uppercase', fontWeight: 700, marginBottom: 8, letterSpacing: '0.05em' }}>Target Tickers (Optional)</label>
+                  <input type="text" value={aiKeys.targetTickers || ''} onChange={e => setAiKeys({...aiKeys, targetTickers: e.target.value})} placeholder="e.g., AMBA, AXON, AAPL" style={{ width: '100%', background: '#020617', border: '1px solid #1e293b', padding: '14px', borderRadius: 10, color: '#f59e0b', fontSize: 14, fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }} />
+                  <div style={{ fontSize: 11, color: '#64748b', marginTop: 8 }}>If provided, the AI will ignore the Output Count and only analyze these specific symbols for today's session.</div>
                 </div>
 
                 <div style={{ marginBottom: 24 }}>

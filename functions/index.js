@@ -1,33 +1,25 @@
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 const stripeLib = require('stripe');
-const axios = require('axios'); 
+const axios = require('axios');
 
 admin.initializeApp();
 const db = admin.firestore();
-
 const APP_ID = 'default-app-id';
 
-// ─── Create Stripe Checkout Session ───────────────────────────────────────────
-// Called from your React app when user clicks "Proceed to Payment"
+// ─── Create Stripe Checkout Session ──────────────────────────────────────────
 exports.createStripeCheckout = onCall({
   region: 'europe-west1',
   secrets: ['STRIPE_SECRET_KEY'],
 }, async (request) => {
-
-  // Must be logged in
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'You must be logged in to checkout.');
   }
-
   const { priceId, mode, successUrl, cancelUrl, planId } = request.data;
-
   if (!priceId) {
     throw new HttpsError('invalid-argument', 'Missing Stripe Price ID.');
   }
-
   const stripe = stripeLib(process.env.STRIPE_SECRET_KEY);
-
   try {
     const session = await stripe.checkout.sessions.create({
       mode: mode || 'subscription',
@@ -37,66 +29,40 @@ exports.createStripeCheckout = onCall({
       cancel_url: cancelUrl,
       client_reference_id: request.auth.uid,
       customer_email: request.auth.token.email,
-      metadata: {
-        planId: planId || '',
-        userId: request.auth.uid,
-      },
+      metadata: { planId: planId || '', userId: request.auth.uid },
     });
-
     return { url: session.url };
-
   } catch (err) {
     console.error('Stripe session creation failed:', err.message);
     throw new HttpsError('internal', err.message);
   }
 });
 
-
 // ─── Stripe Webhook ───────────────────────────────────────────────────────────
-// Stripe calls this after payment succeeds to grant Pro access
 exports.stripeWebhook = onRequest({
   region: 'europe-west1',
   secrets: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
 }, async (req, res) => {
-
   const stripe = stripeLib(process.env.STRIPE_SECRET_KEY);
   const sig = req.headers['stripe-signature'];
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  // Verify the request actually came from Stripe
   let event;
   try {
-    event = stripe.webhooks.constructEvent(req.rawBody, sig, webhookSecret);
+    event = stripe.webhooks.constructEvent(
+      req.rawBody,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
+    console.error('Webhook signature failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
   console.log('Stripe event received:', event.type);
 
-  // ── Payment completed (one-time purchase) ──────────────────────────────────
-  if (event.type === 'payment_intent.succeeded') {
-    const paymentIntent = event.data.object;
-    const uid = paymentIntent.metadata?.userId;
-    const planId = paymentIntent.metadata?.planId || 'lifetime';
-
-    if (uid) {
-      await db.doc(`artifacts/${APP_ID}/public/data/profiles/${uid}`).update({
-        'subscription.plan': planId,
-        'subscription.status': 'active',
-        'subscription.since': new Date().toISOString(),
-        'subscription.stripeCustomerId': paymentIntent.customer,
-      });
-      console.log(`Granted ${planId} access to user ${uid}`);
-    }
-  }
-
-  // ── Subscription checkout completed ───────────────────────────────────────
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     const uid = session.client_reference_id;
     const planId = session.metadata?.planId || 'web_pro';
-
     if (uid) {
       await db.doc(`artifacts/${APP_ID}/public/data/profiles/${uid}`).update({
         'subscription.plan': planId,
@@ -105,11 +71,10 @@ exports.stripeWebhook = onRequest({
         'subscription.stripeCustomerId': session.customer,
         'subscription.stripeSessionId': session.id,
       });
-      console.log(`Checkout complete — granted ${planId} to user ${uid}`);
+      console.log(`Granted ${planId} to user ${uid}`);
     }
   }
 
-  // ── Subscription cancelled ─────────────────────────────────────────────────
   if (event.type === 'customer.subscription.deleted') {
     const customerId = event.data.object.customer;
     const snapshot = await db
@@ -133,7 +98,7 @@ exports.stripeWebhook = onRequest({
 // ─── AI Stock Analysis ────────────────────────────────────────────────────────
 exports.triggerClaudeStockAnalysis = onCall({
   region: 'europe-west1',
-  timeoutSeconds: 120 // Extended timeout for AI processing
+  timeoutSeconds: 120 // Critical for slower AI responses
 }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'You must be logged in.');
@@ -153,8 +118,9 @@ exports.triggerClaudeStockAnalysis = onCall({
 
   const OPENROUTER_API_KEY = aiConfig.data()?.openRouterKey;
   const AI_MODEL = aiConfig.data()?.aiModel || 'anthropic/claude-3.5-sonnet';
+  const TARGET_TICKERS = aiConfig.data()?.targetTickers || "";
   const STOCK_COUNT = aiConfig.data()?.stockCount || 3;
-  const CUSTOM_INSTRUCTIONS = aiConfig.data()?.customInstructions || "Include a mix of large-cap and completely unexpected small-cap/mid-cap stocks. Avoid repeating META, NVDA, or XOM. Give diverse sectors.";
+  const CUSTOM_INSTRUCTIONS = aiConfig.data()?.customInstructions || "";
 
   if (!OPENROUTER_API_KEY) {
     throw new HttpsError(
@@ -163,12 +129,19 @@ exports.triggerClaudeStockAnalysis = onCall({
     );
   }
 
-  const prompt = `Act as an elite institutional quantitative analyst. Find exactly ${STOCK_COUNT} high-probability stock trading ideas for today. 
-Admin Instructions: ${CUSTOM_INSTRUCTIONS}
-Return ONLY a raw JSON array with no markdown and no backticks.
-Each object must have exactly these fields:
-ticker, companyName, bias (must be BULLISH or BEARISH), 
-analysis (2-3 sentences), currentPrice (number), targetPrice (number).`;
+  // DYNAMIC PROMPT: Adjusts based on whether specific tickers are requested
+  let prompt = "";
+  if (TARGET_TICKERS.trim().length > 0) {
+      prompt = `Act as an elite institutional quantitative analyst. Provide a highly accurate, intraday trading analysis for the following specific stock tickers for today: ${TARGET_TICKERS}. 
+      Focus on immediate catalysts, technical levels, and likelihood of hitting the target before the close of the day.
+      Admin Instructions: ${CUSTOM_INSTRUCTIONS}
+      Return the result STRICTLY as a raw JSON array containing objects with exact keys: "ticker", "companyName", "bias" (BULLISH/BEARISH), "analysis" (2-3 sentences), "currentPrice" (number), "targetPrice" (number). Do not output any other text, markdown, or greetings.`;
+  } else {
+      prompt = `Act as an elite institutional quantitative analyst. Find exactly ${STOCK_COUNT} high-probability intraday stock trading ideas for today. 
+      Focus on stocks with immediate catalysts or technical breakouts likely to hit targets before the close of the day.
+      Admin Instructions: ${CUSTOM_INSTRUCTIONS}
+      Return the result STRICTLY as a raw JSON array containing objects with exact keys: "ticker", "companyName", "bias" (BULLISH/BEARISH), "analysis" (2-3 sentences), "currentPrice" (number), "targetPrice" (number). Do not output any other text, markdown, or greetings.`;
+  }
 
   try {
     const response = await axios.post(
@@ -176,7 +149,7 @@ analysis (2-3 sentences), currentPrice (number), targetPrice (number).`;
       {
         model: AI_MODEL,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7 // Adds creativity so it stops picking the exact same stocks
+        temperature: 0.7 
       },
       {
         headers: {
@@ -194,15 +167,15 @@ analysis (2-3 sentences), currentPrice (number), targetPrice (number).`;
 
     const stockIdeasRef = db.collection(`artifacts/${APP_ID}/public/data/stock_ideas`);
 
-    // CLEANUP: Delete old ideas to prevent duplicates
+    // CLEANUP: Delete old ideas so you don't end up with duplicates
     const oldIdeasSnap = await stockIdeasRef.get();
     const deleteBatch = db.batch();
     oldIdeasSnap.docs.forEach(doc => {
-        deleteBatch.delete(doc.ref);
+      deleteBatch.delete(doc.ref);
     });
     await deleteBatch.commit();
 
-    // WRITE: Save new ideas using the Ticker as the Document ID
+    // WRITE: Save new ideas using the Ticker as the Document ID to guarantee uniqueness
     const writeBatch = db.batch();
     ideas.forEach(idea => {
       const docRef = stockIdeasRef.doc(idea.ticker.toUpperCase());
